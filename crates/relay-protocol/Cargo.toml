@@ -1,0 +1,12 @@
+[package]
+name = "relay-protocol"
+version = "0.1.0"
+edition = "2024"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[dependencies]
+serde = { workspace = true }
+postcard = { workspace = true }
+bitflags = { workspace = true }

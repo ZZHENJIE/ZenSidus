@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/client",
+    "crates/relay-protocol",
+    "crates/server",
+]
+
+[workspace.dependencies]
+# Error
+anyhow = "1.0.104"
+
+# Serialization
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+
+# relay 线协议(TCP + postcard 帧):client / relay-server 共用
+postcard = { version = "1.1", features = ["use-std"] }
+bitflags = { version = "2.9", features = ["serde"] }
+
+# Async(client / relay-server 共用)
+tokio = { version = "1", features = ["full"] }
+futures = "0.3.34"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# AnySDK:Alpaca 行情(HTTP + WebSocket 流)与 Finviz Elite SDK(独立项目)
+anysdk = { git = "https://github.com/ZZHENJIE/AnySDK", features = ["full"] }
+
+# CI 产物瘦身(本地开发跑 debug profile,不受影响)
+[profile.release]
+strip = true

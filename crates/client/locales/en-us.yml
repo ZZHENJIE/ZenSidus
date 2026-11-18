@@ -1,0 +1,361 @@
+app:
+  # ── 全局 ──────────────────────────────────────────────────────────────
+  tokio_runtime_error: Failed to start the background runtime; timers and calendars are unavailable
+  page:
+    placeholder: This page is under construction.
+
+  # ── 标题栏菜单 ────────────────────────────────────────────────────────
+  menu:
+    app: App
+    docs: Docs
+    settings: Settings
+    windows: Windows
+    panels: Panels
+    custom: Custom
+    etf_linkcalc: ETF LinkCalc
+    small_clock: Small Clock
+    # 族子菜单标签(镜像 panels/{news,screener,calendar})
+    news: News
+    screener: Screener
+    calendar: Calendar
+    # 族内短标签(省族词,tab 标题仍用全名)
+    item:
+      stock: Stock
+      market: Market
+      economic: Economic
+      earnings: Earnings
+      ipo: IPO
+
+  # ── 窗口标题与退出对话框 ──────────────────────────────────────────────
+  windows:
+    main:
+      title: ZenSidus
+      close_dialog_title: Close the window and save the layout?
+      close_dialog_cancel: Cancel
+      close_dialog_no_save: Not Save
+      close_dialog_save: Save
+    settings:
+      title: Settings
+    small_clock:
+      title: Small Clock
+    custom:
+      title: Custom
+    etf_linkcalc:
+      title: ETF LinkCalc
+
+  # ── 面板标题(PANEL::TITLE_KEY,与 panels::all 一一对应)──────────────
+  panels:
+    watchlist: Watchlist
+    stock_news: Stock News
+    market_news: Market News
+    quote: Quote
+    trades: Trades
+    stock_screener: Stock Screener
+    market_screener: Market Screener
+    chart: Chart
+    economic_calendar: Economic Calendar
+    earnings_calendar: Earnings Calendar
+    ipo_calendar: IPO Calendar
+    experiment: Experiment
+
+  # ── 面板文案:Watchlist ───────────────────────────────────────────────
+  watchlist:
+    code: Symbol
+    price: Last
+    change: Change
+    change_pct: Change %
+    time: Updated
+    empty: No symbols yet. Search above to add one.
+    pick_group: Select group
+    new_group: New group
+    new_group_title: New group name
+    delete_group: Delete this group
+    delete_group_confirm: "Delete group \"%{name}\" and its %{count} symbols? This cannot be undone."
+
+  # ── 面板文案:Stock News ──────────────────────────────────────────────
+  stock_news:
+    empty: Search a symbol to see its news
+    failed: Failed to fetch news
+    no_credentials: Connect to the relay first — see the Relay settings page
+    headline: Headline
+    source: Source
+    updated_at: Updated
+    search_tooltip: Search and switch stock
+
+  # ── 面板文案:Market News ─────────────────────────────────────────────
+  market_news:
+    headline: Headline
+    symbols: Symbols
+    source: Source
+    updated_at: Updated
+    empty: Waiting for the news feed — new articles appear here automatically
+    failed: Failed to fetch market news
+    no_credentials: Connect to the relay first — see the Relay settings page
+
+  # ── 面板文案:Stock Screener ──────────────────────────────────────
+  stock_screener:
+    pick_preset: Pick preset
+    add_preset: Add preset
+    edit_preset: Edit preset
+    delete_preset: Delete preset
+    delete_confirm: "Delete preset \"%{name}\"? This cannot be undone."
+    no_relay: Connect to the relay first — see the Relay settings page
+    empty: Pick a preset from the toolbar to load data
+    failed: The screener request failed. See the message center for details
+    no_data: The preset returned no data
+    unnamed_column: "Column %{index}"
+
+  # ── 面板文案:Market Screener ────────────────────────────────────────
+  market_screener:
+    symbol: Symbol
+    size: Size
+    pick_preset: Pick preset
+    add_preset: New market preset
+    edit_preset: Edit market preset
+    delete_preset: Delete preset
+    delete_confirm: "Delete market preset \"%{name}\"? This cannot be undone."
+    no_preset: Create a market preset from the toolbar's preset settings
+    no_pool: Empty pool
+    not_connected: Not connected
+    waiting: No hits yet
+    truncated: "The pool exceeds the %{max} symbol limit and was truncated"
+    failed: Loading the symbol pool failed. See the message center for details
+    referenced_missing: "The preset's Finviz preset \"%{name}\" no longer exists"
+    preset_title: Preset title
+    preset_title_hint: Shown in the toolbar, to tell presets apart
+    finviz_preset: Finviz preset (first round)
+    pick_finviz: Pick a Finviz preset
+    exchanges: Exchanges
+    exchanges_placeholder: Pick exchanges
+    exchanges_hint: Multi-select; one table per exchange — an ask or bid resting there with enough size fills that table
+    min_size: Minimum size
+    min_size_hint: An ask or bid size must reach this value; 0 disables the check
+    no_relay: Connect to the relay first — see the Relay settings page
+
+  # ── 面板文案:Trades(time & sales)────────────────────────────────────
+  trades:
+    time: Time
+    price: Price
+    size: Size
+    exchange: Exchange
+    search_title: Search and switch the tape symbol
+    no_symbol: Pick a symbol from the toolbar search
+    not_connected: The relay is not connected
+    waiting: Waiting for prints… (live during trading hours)
+
+  # ── 面板文案:Quote(top of book)──────────────────────────────────────
+  quote:
+    bid: Bid
+    ask: Ask
+    price: Price
+    size: Size
+    exchange: Exchange
+    search_title: Search and switch the quote symbol
+    no_symbol: Pick a symbol from the toolbar search
+
+  # ── 面板文案:日历族(calendar/{economic,earnings,ipo})──────────────
+  calendar:
+    economic:
+      failed: Failed to fetch the economic calendar
+      pick_week: Pick a week
+      time: Time
+      event: Event
+      for: For
+      actual: Actual
+      expected: Expected
+      prior: Prior
+      empty: No economic events this week
+    earnings:
+      failed: Failed to fetch the earnings calendar
+      pick_day: Pick a day
+      time: Time
+      symbol: Symbol
+      company: Company
+      market_cap: Market Cap
+      eps_estimate: EPS Estimate
+      eps_actual: EPS Actual
+      eps_surprise: EPS Surprise
+      revenue_estimate: Revenue Estimate
+      revenue_actual: Revenue Actual
+      revenue_surprise: Revenue Surprise
+      reaction: 1-Day Price Reaction
+      empty: No earnings on this day
+    ipo:
+      failed: Failed to fetch the IPO calendar
+      open_site: Open iposcoop.com
+      company: Company
+      symbol: Symbol
+      managers: Managers
+      shares_millions: Shares (Millions)
+      price_low: Price Low
+      price_high: Price High
+      expected_date: Expected Date
+      empty: No IPO data — refresh to retry
+
+  # ── 窗口文案:ETF 联价器 ──────────────────────────────────────────────
+  etf_linkcalc:
+    params: Parameters…
+    params_title: Link parameters
+    index_symbol: Index symbol
+    etf_symbol: ETF symbol
+    multiple: ETF leverage
+    direction: ETF direction
+    long: Long
+    short: Short
+    index_open: Index open (today)
+    etf_open: ETF open (today)
+    opens_desc: These are today's opening prices — update them each trading day.
+    index_offset: Index offset
+    long_short_offset: Long/short offset
+    offsets_desc: Both may be negative — the index offset shifts the computed level, the long/short offset lands on the spread side the direction picks.
+
+  # ── 窗口文案:小时钟 ──────────────────────────────────────────────────
+  small_clock:
+    alert: "%{count} Events Upcoming, Max Level %{level}"
+
+  # ── 窗口文案:设置窗口 ────────────────────────────────────────────────
+  settings:
+    # 通用页
+    general: General
+    language: Language
+    theme: Theme
+    theme_desc: Adjust the accent and market colors; changes apply instantly.
+    theme_hint: Changes apply instantly and are saved automatically.
+    colors: Colors
+    color_primary: Accent
+    color_primary_desc: Accent for primary actions, links and selection.
+    color_bullish: Bullish color
+    color_bullish_desc: Marker color for rising quotes (red by default).
+    color_bearish: Bearish color
+    color_bearish_desc: Marker color for falling quotes (green by default).
+    color_background: Background
+    color_background_desc: Window, sidebar, list and table backdrop.
+    color_surface: Surface
+    color_surface_desc: Cards, group boxes and muted fills.
+    color_text: Text
+    color_text_desc: Primary text color across the app.
+    color_border: Border
+    color_border_desc: Hairlines, dividers and input outlines.
+    color_secondary: Secondary
+    color_secondary_desc: Tone of secondary buttons, drawn translucent.
+    color_success: Success
+    color_success_desc: Positive status color, e.g. the connected dot.
+    color_warning: Warning
+    color_warning_desc: Warning status color, e.g. while connecting.
+    color_info: Info
+    color_info_desc: Informational accent color.
+    color_error: Error
+    color_error_desc: Danger color for destructive actions and failures.
+    # 小时钟页
+    small_clock: Small Clock
+    alert_minutes: Alert lead time (minutes)
+    alert_minutes_desc: Alert for economic events starting within this many minutes.
+    alert_sound: Alert sound
+    min_impact: Minimum alert level
+    level_low: Low (1)
+    level_medium: Medium (2)
+    level_high: High (3)
+    # Relay 页
+    relay: Relay
+    relay_desc: "The relay server is the app's only outbound data connection: quotes, news and every lookup go through it."
+    connection: Connection
+    relay_addr: Server address
+    relay_addr_desc: "Relay server address as host:port, e.g. relay.example.com:9720."
+    relay_token: Token
+    relay_token_desc: The preshared access token configured on the relay server.
+    relay_tls: TLS
+    relay_tls_desc: "TLS is terminated by nginx on the server; keep this on when connecting through it."
+    relay_tls_cert: TLS certificate path
+    relay_tls_cert_desc: "Path to the server certificate (PEM) to pin, e.g. a Cloudflare origin certificate that public trust stores do not know. Empty = verify against public roots."
+    connect: Connect
+    disconnect: Disconnect
+    status:
+      connected: Connected
+      connecting: Connecting…
+      disconnected: Disconnected
+      failed: Connection failed. Check the server address and token.
+      reconnecting: Connection lost, reconnecting…
+      subscribe_failed: "Subscribe failed after retries: %{symbols} — those symbols may have no data"
+    # 市场筛选器页
+    market_screener: Market Screener
+    pool_limit: Symbol pool limit
+    pool_limit_desc: "Maximum symbols the Market Screener subscribes live quotes for; 0 = unlimited. Applies on the next pool fetch (Refresh or a preset switch)."
+    finviz_preset_name: Preset name
+    finviz_preset_type: Type
+    finviz_type_desc: "Market this preset screens: stocks or ETFs."
+    finviz_stock: Stock
+    finviz_etf: ETF
+    finviz_signal: Signal
+    finviz_signal_desc: Finviz signal, e.g. top_gainers; empty = none.
+    finviz_order: Order
+    finviz_order_desc: Sort field, e.g. -marketcap, -volume.
+    finviz_filter: Filters
+    finviz_filter_desc: Filters, e.g. cap_smallover, fa_highgrowth.
+    finviz_columns: Columns
+    finviz_columns_placeholder: Pick export columns…
+    finviz_columns_desc: Searchable multi-select; empty = Finviz default set.
+    finviz_add_title: New Screener Preset
+    finviz_edit_title: Edit Screener Preset
+    # 日志页
+    logs: Logs
+    logs_desc: Browse application logs by day.
+    logs_empty: No log file for this day.
+    logs_truncated: "Truncated: showing the last %{count} lines only. Open the file for full content."
+    logs_error: "Failed to read the log; see the app log for details."
+    # 页面通用
+    refresh: Refresh
+    open_file: Open file
+
+  # ── 通用组件 ──────────────────────────────────────────────────────────
+  dialog:
+    confirm: Confirm
+    cancel: Cancel
+  symbol:
+    search_title: Search Symbol
+  search:
+    placeholder: Search symbol or name…
+    no_results: No matches
+    hint_navigate: Navigate
+    hint_pick: Confirm
+    hint_close: Close
+  translate:
+    title: "Translate"
+    source: "Source"
+    result: "Translation"
+    failed: "Translation failed"
+
+  # ── 消息中心与全局通知 ────────────────────────────────────────────────
+  messages:
+    title: Messages
+    empty: No messages yet
+    clear: Clear messages
+  notify:
+    search_failed: Search failed. Check your network.
+    save_failed: Failed to save settings
+    keyring_failed: Failed to store credentials in the system credential manager
+    open_log_failed: Failed to open the log file
+    window_open_failed: "Failed to open the %{window} window"
+  # ── 日志(tracing 诊断文本,跟随 UI 语言;%{err} 为上游错误值,保持原文)──
+  log:
+    load_settings_failed: "Failed to load settings, using defaults: %{err}"
+    unknown_language: "Unknown language %{language}; falling back to %{fallback}"
+    geometry_not_persisted: "Geometry of %{window} not persisted: %{err}"
+    panel_not_registered: "No panel registered as %{name}"
+    missed_stream_messages: "Watchlist missed %{count} stream messages"
+    keyring_store_failed: "Failed to store credentials: %{err}"
+    settings_save_failed: "Failed to save settings: %{err}"
+    default_config_write_failed: "Failed to write default config to %{path}: %{err}"
+    settings_rename_fallback: "Atomic settings rename failed (%{err}); wrote directly"
+    stream_connect_failed: "Stock stream connect failed: %{err}"
+    stream_connection_lost: "Stock stream connection lost"
+    stream_stale: "Quote stream fell %{age}ms behind — reconnecting for a fresh route"
+    stream_reconnecting: "Stock stream reconnecting (attempt %{attempt})"
+    wire_queue_gone: "Wire queue is gone; dropping subscribe/unsubscribe"
+    keyring_read_failed: "Failed to read %{entry} from the credential store: %{err}"
+    audio_decode_failed: "Failed to decode %{audio}: %{err}"
+    window_open_failed: "Failed to open %{window} window: %{err}"
+    invalid_timestamp: "Invalid timestamp: %{timestamp}"
+    network_time_failed: "Failed to fetch network time, using the local clock: %{err}"
+    calendar_parse_failed: "Failed to parse the economic calendar: %{err}"
+    calendar_fetch_failed: "Failed to fetch the economic calendar: %{err}"
+    relay_not_connected: "Relay is not connected"

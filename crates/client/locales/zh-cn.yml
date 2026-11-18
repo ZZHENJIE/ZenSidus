@@ -1,0 +1,360 @@
+app:
+  # ── 全局 ──────────────────────────────────────────────────────────────
+  tokio_runtime_error: 后台运行时启动失败,计时器与日历功能不可用
+  page:
+    placeholder: 页面正在搭建中,内容即将到来。
+
+  # ── 标题栏菜单 ────────────────────────────────────────────────────────
+  menu:
+    app: 应用
+    docs: 文档
+    settings: 设置
+    windows: 窗口
+    panels: 面板
+    custom: 自定义
+    etf_linkcalc: ETF联价器
+    small_clock: 小时钟
+    # 族子菜单标签(镜像 panels/{news,screener,calendar})
+    news: 新闻
+    screener: 筛选器
+    calendar: 日历
+    # 族内短标签(省族词,tab 标题仍用全名)
+    item:
+      stock: 个股
+      market: 市场
+      economic: 经济
+      earnings: 财报
+      ipo: IPO
+
+  # ── 窗口标题与退出对话框 ──────────────────────────────────────────────
+  windows:
+    main:
+      title: ZenSidus
+      close_dialog_title: 是否关闭窗口并保存布局?
+      close_dialog_cancel: 取消
+      close_dialog_no_save: 不保存
+      close_dialog_save: 保存
+    settings:
+      title: 设置
+    small_clock:
+      title: 小时钟
+    custom:
+      title: 自定义
+    etf_linkcalc:
+      title: ETF联价器
+
+  # ── 面板标题(PANEL::TITLE_KEY,与 panels::all 一一对应)──────────────
+  panels:
+    watchlist: 自选
+    stock_news: 个股新闻
+    market_news: 市场新闻
+    quote: 单票行情
+    trades: 逐笔成交
+    stock_screener: 个股筛选器
+    market_screener: 市场筛选器
+    chart: 图表
+    economic_calendar: 经济日历
+    earnings_calendar: 财报日历
+    ipo_calendar: IPO 日历
+    experiment: 实验性
+
+  # ── 面板文案:Watchlist ───────────────────────────────────────────────
+  watchlist:
+    code: 代码
+    price: 最新价
+    change: 涨跌
+    change_pct: 涨跌幅
+    time: 更新时间
+    empty: 暂无自选代码,在上方搜索添加
+    pick_group: 选择分组
+    new_group: 新建分组
+    new_group_title: 分组名称
+    delete_group: 删除当前分组
+    delete_group_confirm: "删除分组“%{name}”及其 %{count} 只标的？此操作不可撤销。"
+
+  # ── 面板文案:Stock News ──────────────────────────────────────────────
+  stock_news:
+    empty: 搜索代码查看资讯
+    failed: 获取资讯失败
+    no_credentials: 先连接 relay,见设置的 Relay 页
+    headline: 标题
+    source: 来源
+    updated_at: 更新时间
+    search_tooltip: 搜索并切换资讯股票
+
+  # ── 面板文案:Market News ─────────────────────────────────────────────
+  market_news:
+    headline: 标题
+    symbols: 相关标的
+    source: 来源
+    updated_at: 更新时间
+    empty: 正在等待新闻流推送,新文章会自动出现
+    failed: 获取市场新闻失败
+
+  # ── 面板文案:Stock Screener ──────────────────────────────────────────
+  stock_screener:
+    pick_preset: 选择预设
+    add_preset: 添加参数
+    edit_preset: 编辑参数
+    delete_preset: 删除参数
+    delete_confirm: "删除参数“%{name}”？此操作不可撤销。"
+    no_relay: 先连接 relay,见设置的 Relay 页
+    empty: 从工具栏选择预设加载数据
+    failed: 筛选器请求失败,详情见消息中心
+    no_data: 预设没有返回数据
+    unnamed_column: "列 %{index}"
+
+  # ── 面板文案:Market Screener ────────────────────────────────────────
+  market_screener:
+    symbol: 代码
+    size: 挂单量
+    pick_preset: 选择预设
+    add_preset: 新建市场预设
+    edit_preset: 编辑市场预设
+    delete_preset: 删除预设
+    delete_confirm: "删除市场预设“%{name}”？此操作不可撤销。"
+    no_preset: 从工具栏的预设设置新建一个市场预设
+    no_pool: 股票池为空
+    not_connected: 未连接
+    waiting: 暂无命中
+    truncated: "股票池超出 %{max} 个上限,已截断"
+    failed: 加载股票池失败,详情见消息中心
+    referenced_missing: "预设引用的 Finviz 预设“%{name}”不存在"
+    preset_title: 预设标题
+    preset_title_hint: 显示在工具栏,用于分辨预设
+    finviz_preset: Finviz 预设(首轮筛选)
+    pick_finviz: 选择 Finviz 预设
+    exchanges: 交易所
+    exchanges_placeholder: 选择交易所
+    exchanges_hint: 多选;每个交易所一张表,ask 或 bid 挂在该所且量达标即计入
+    min_size: 最小挂单量
+    min_size_hint: ask 或 bid 挂单量需不小于此值,0 表示不限
+    no_relay: 先连接 relay,见设置的 Relay 页
+
+  # ── 面板文案:Trades(逐笔成交)────────────────────────────────────────
+  trades:
+    time: 时间
+    price: 成交价
+    size: 数量
+    exchange: 交易所
+    search_title: 搜索并切换逐笔标的
+    no_symbol: 从工具栏搜索选择标的
+    not_connected: relay 行情流未连接
+    waiting: 等待成交…(交易时段实时更新)
+
+  # ── 面板文案:Quote(单票行情)──────────────────────────────────────────
+  quote:
+    bid: Bid
+    ask: Ask
+    price: 价格
+    size: 数量
+    exchange: 交易所
+    search_title: 搜索并切换行情标的
+    no_symbol: 从工具栏搜索选择标的
+
+  # ── 面板文案:日历族(calendar/{economic,earnings,ipo})──────────────
+  calendar:
+    economic:
+      failed: 获取经济日历失败
+      pick_week: 选择周
+      time: 时间
+      event: 事件
+      for: 对象
+      actual: 实际值
+      expected: 预期值
+      prior: 前值
+      empty: 本周暂无经济事件
+    earnings:
+      failed: 获取财报日历失败
+      pick_day: 选择日期
+      time: 时间
+      symbol: 股票代码
+      company: 公司
+      market_cap: 市值
+      eps_estimate: EPS 预估
+      eps_actual: EPS 实际
+      eps_surprise: EPS 超出
+      revenue_estimate: 营收预估
+      revenue_actual: 营收实际
+      revenue_surprise: 营收超出
+      reaction: 1 日股价反应
+      empty: 当日暂无财报
+    ipo:
+      failed: 获取 IPO 日历失败
+      open_site: 打开 iposcoop.com
+      company: 公司
+      symbol: 股票代码
+      managers: 承销商 / 管理人
+      shares_millions: 发行股数（百万股）
+      price_low: 发行价下限
+      price_high: 发行价上限
+      expected_date: 预期上市日期
+      empty: 暂无 IPO 数据,刷新可重试
+
+  # ── 窗口文案:ETF 联价器 ──────────────────────────────────────────────
+  etf_linkcalc:
+    params: 参数…
+    params_title: 关联参数
+    index_symbol: 指数 Symbol
+    etf_symbol: ETF Symbol
+    multiple: ETF 倍数
+    direction: ETF 方向
+    long: 做多
+    short: 做空
+    index_open: 当日指数开盘价
+    etf_open: 当日 ETF 开盘价
+    opens_desc: 这里填当日开盘价,每个交易日需更新
+    index_offset: 指数偏移值
+    long_short_offset: 多空偏移值
+    offsets_desc: 偏移均可为负:指数偏移叠加到算出的指数价,多空偏移按方向加到 Bid 或 Ask 一侧
+
+  # ── 窗口文案:小时钟 ──────────────────────────────────────────────────
+  small_clock:
+    alert: "%{count} 条事件即将发生,最高级别 %{level}"
+
+  # ── 窗口文案:设置窗口 ────────────────────────────────────────────────
+  settings:
+    # 通用页
+    general: 通用
+    language: 语言
+    theme: 主题
+    theme_desc: 调整品牌主色与行情涨跌配色,修改即时生效。
+    theme_hint: 颜色修改即时生效并自动保存。
+    colors: 配色
+    color_primary: 主色
+    color_primary_desc: 主按钮、链接与选中态的强调色。
+    color_bullish: 上涨色
+    color_bullish_desc: 行情上涨的标记色(默认红涨)。
+    color_bearish: 下跌色
+    color_bearish_desc: 行情下跌的标记色(默认绿跌)。
+    color_background: 背景
+    color_background_desc: 窗口、侧栏、列表与表格的底色。
+    color_surface: 表面
+    color_surface_desc: 卡片、分组框与 muted 填充。
+    color_text: 文字
+    color_text_desc: 全局主要文字颜色。
+    color_border: 边框
+    color_border_desc: 分隔线与输入框描边。
+    color_secondary: 次级
+    color_secondary_desc: 次级按钮的底色,以半透明呈现。
+    color_success: 成功
+    color_success_desc: 正向状态色,如“已连接”的状态点。
+    color_warning: 警告
+    color_warning_desc: 警告状态色,如“连接中”。
+    color_info: 信息
+    color_info_desc: 信息提示色。
+    color_error: 错误
+    color_error_desc: 危险操作与失败状态的标记色。
+    # 小时钟页
+    small_clock: 小时钟
+    alert_minutes: 提前提醒分钟数
+    alert_minutes_desc: 经济事件在此分钟数内开始时提醒。
+    alert_sound: 声音提示
+    min_impact: 最低提醒级别
+    level_low: 低 (1)
+    level_medium: 中 (2)
+    level_high: 高 (3)
+    # Relay 页
+    relay: Relay
+    relay_desc: relay 服务器是应用唯一的对外数据连接:行情、新闻与全部查询都经由它。
+    connection: 连接
+    relay_addr: 服务器地址
+    relay_addr_desc: relay 服务器地址,形如 host:port,如 relay.example.com:9720。
+    relay_token: Token
+    relay_token_desc: relay 服务器配置的预共享访问令牌。
+    relay_tls: TLS
+    relay_tls_desc: TLS 由服务器端的 nginx 终结;经其连接时保持开启。
+    relay_tls_cert: TLS 证书路径
+    relay_tls_cert_desc: 用于固定校验的服务器证书(PEM)路径,例如公共信任链不认的 Cloudflare 源站证书。留空按公共根校验。
+    connect: 连接
+    disconnect: 断开
+    status:
+      connected: 已连接
+      connecting: 连接中…
+      disconnected: 未连接
+      failed: 连接失败,请检查服务器地址与 Token
+      reconnecting: 连接断开,正在重连…
+      subscribe_failed: "订阅失败(已重试): %{symbols},相关代码可能无行情"
+    # 市场筛选器页
+    market_screener: 市场筛选器
+    pool_limit: 股票池上限
+    pool_limit_desc: 市场筛选器订阅实时报价的股票池上限;0 = 不限制。下次拉取股票池(点刷新或切换预设)时生效。
+    finviz_preset_name: 预设名称
+    finviz_preset_type: 类型
+    finviz_type_desc: 预设筛选的市场:股票或 ETF。
+    finviz_stock: 股票
+    finviz_etf: ETF
+    finviz_signal: 信号
+    finviz_signal_desc: Finviz 信号,如 top_gainers;留空不使用。
+    finviz_order: 排序
+    finviz_order_desc: 排序字段,如 -marketcap、-volume。
+    finviz_filter: 筛选参数
+    finviz_filter_desc: 筛选条件,如 cap_smallover,fa_highgrowth。
+    finviz_columns: 导出列
+    finviz_columns_placeholder: 选择导出列…
+    finviz_columns_desc: 可搜索多选;留空使用 Finviz 默认列集。
+    finviz_add_title: 新建筛选器预设
+    finviz_edit_title: 编辑筛选器预设
+    # 日志页
+    logs: 日志
+    logs_desc: 按天查看应用运行日志。
+    logs_empty: 当天没有日志文件。
+    logs_truncated: 已截断:仅显示最后 %{count} 行,完整内容请打开文件。
+    logs_error: 读取日志失败,详情见应用日志。
+    # 页面通用
+    refresh: 刷新
+    open_file: 打开文件
+
+  # ── 通用组件 ──────────────────────────────────────────────────────────
+  dialog:
+    confirm: 确认
+    cancel: 取消
+  symbol:
+    search_title: 搜索代码
+  search:
+    placeholder: 搜索代码或名称…
+    no_results: 无匹配结果
+    hint_navigate: 选择
+    hint_pick: 确认
+    hint_close: 关闭
+  translate:
+    title: "翻译"
+    source: "原文"
+    result: "译文"
+    failed: "翻译失败"
+
+  # ── 消息中心与全局通知 ────────────────────────────────────────────────
+  messages:
+    title: 消息
+    empty: 暂无消息
+    clear: 清空消息
+  notify:
+    search_failed: 搜索失败,请检查网络
+    save_failed: 设置保存失败
+    keyring_failed: 凭据写入系统凭据库失败
+    open_log_failed: 打开日志文件失败
+    window_open_failed: "打开 %{window} 窗口失败"
+  # ── 日志(tracing 诊断文本,跟随 UI 语言;%{err} 为上游错误值,保持原文)──
+  log:
+    load_settings_failed: "读取设置失败,已使用默认配置:%{err}"
+    unknown_language: "未知语言 %{language},回退到 %{fallback}"
+    geometry_not_persisted: "%{window} 的窗口位置未保存:%{err}"
+    panel_not_registered: "没有注册名为 %{name} 的面板"
+    missed_stream_messages: "自选面板落后 %{count} 条行情消息"
+    keyring_store_failed: "凭据写入系统凭据库失败:%{err}"
+    settings_save_failed: "设置保存失败:%{err}"
+    default_config_write_failed: "默认配置写入 %{path} 失败:%{err}"
+    settings_rename_fallback: "原子重命名保存失败(%{err}),已改为直接写入"
+    stream_connect_failed: "行情流连接失败:%{err}"
+    stream_connection_lost: "行情流连接断开"
+    stream_stale: "行情流滞后 %{age}ms,正在重连换新线路"
+    stream_reconnecting: "行情流重连中(第 %{attempt} 次尝试)"
+    wire_queue_gone: "发送队列已关闭,丢弃订阅/退订指令"
+    keyring_read_failed: "从系统凭据库读取 %{entry} 失败:%{err}"
+    audio_decode_failed: "音频解码失败 %{audio}:%{err}"
+    window_open_failed: "打开 %{window} 窗口失败:%{err}"
+    invalid_timestamp: "无效时间戳:%{timestamp}"
+    network_time_failed: "获取网络时间失败,已使用本地时钟:%{err}"
+    calendar_parse_failed: "经济日历数据解析失败:%{err}"
+    calendar_fetch_failed: "获取经济日历失败:%{err}"
+    relay_not_connected: "relay 未连接"

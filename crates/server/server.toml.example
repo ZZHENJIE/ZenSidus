@@ -1,0 +1,26 @@
+# relay-server 配置样例:复制为 server.toml 并填入真实凭据(server.toml 已 gitignore)。
+
+# 下游监听地址。公网暴露由 Nginx stream 块终结 TLS 后转发到本地址(见 README)。
+listen = "127.0.0.1:9720"
+
+# 客户端 Hello.token 预共享密钥(openssl rand -hex 32)。
+token = "CHANGE_ME"
+
+# tracing 过滤级别(RUST_LOG 语法)。
+log_level = "info"
+
+[alpaca]
+key_id = "PK..."
+secret = "..."
+# sip / iex / otc / delayed_sip / boats / overnight
+feed = "delayed_sip"
+
+[finviz]
+token = "..."
+
+[deepseek]
+api_key = "..."
+
+# 可选:本机开发时的上游代理(VPS 上删除本节即可)。
+#[proxy]
+#ws_socks5 = "socks5://127.0.0.1:7890"

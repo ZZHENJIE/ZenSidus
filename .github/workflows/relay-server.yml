@@ -1,0 +1,61 @@
+name: relay-server
+
+# 两个用途:
+# - linux-check:每次 main push / PR 确认 server 全依赖在 Linux 下编译通过;
+# - linux-release:打 `server-v*` tag(或手动触发)时,交叉产出 musl 静态
+#   Linux 二进制并发布到 GitHub Release——VPS 部署不需要本地有 Linux 机器。
+
+on:
+  push:
+    branches: [main]
+    tags: ["server-v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux-check:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p relay-server
+
+  linux-release:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/server-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: musl
+      - name: Build static binary
+        run: cargo build --release -p relay-server --target x86_64-unknown-linux-musl
+      - name: Package
+        run: |
+          cd target/x86_64-unknown-linux-musl/release
+          tar czf "$GITHUB_WORKSPACE/relay-server-linux-amd64.tar.gz" relay-server
+          cd "$GITHUB_WORKSPACE"
+          cp crates/server/server.toml.example relay-server.server.toml.example
+          cp crates/server/README.md relay-server.README.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-server-linux-amd64
+          path: |
+            relay-server-linux-amd64.tar.gz
+            relay-server.server.toml.example
+            relay-server.README.md
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/server-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: relay-server-linux-amd64.tar.gz
+          generate_release_notes: true
