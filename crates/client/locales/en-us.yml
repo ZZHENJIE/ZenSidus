@@ -76,7 +76,6 @@ app:
   stock_news:
     empty: Search a symbol to see its news
     failed: Failed to fetch news
-    no_credentials: Connect to the server first — see the Server settings page
     headline: Headline
     source: Source
     updated_at: Updated
@@ -90,7 +89,6 @@ app:
     updated_at: Updated
     empty: Waiting for the news feed — new articles appear here automatically
     failed: Failed to fetch market news
-    no_credentials: Connect to the server first — see the Server settings page
 
   # ── 面板文案:Stock Screener ──────────────────────────────────────
   stock_screener:
@@ -99,7 +97,6 @@ app:
     edit_preset: Edit preset
     delete_preset: Delete preset
     delete_confirm: "Delete preset \"%{name}\"? This cannot be undone."
-    no_server: Connect to the server first — see the Server settings page
     empty: Pick a preset from the toolbar to load data
     failed: The screener request failed. See the message center for details
     no_data: The preset returned no data
@@ -130,7 +127,6 @@ app:
     exchanges_hint: Multi-select; one table per exchange — an ask or bid resting there with enough size fills that table
     min_size: Minimum size
     min_size_hint: An ask or bid size must reach this value; 0 disables the check
-    no_server: Connect to the server first — see the Server settings page
 
   # ── 面板文案:Trades(time & sales)────────────────────────────────────
   trades:
@@ -358,4 +354,3 @@ app:
     network_time_failed: "Failed to fetch network time, using the local clock: %{err}"
     calendar_parse_failed: "Failed to parse the economic calendar: %{err}"
     calendar_fetch_failed: "Failed to fetch the economic calendar: %{err}"
-    server_not_connected: "Server is not connected"

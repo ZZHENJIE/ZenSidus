@@ -87,6 +87,9 @@ impl Panel for StockNewsPanel {
         if this.symbol(cx).is_some() {
             Self::fetch(this.table.downgrade(), cx);
         }
+        // Offline at startup: the fetch above was skipped silently; load
+        // once the connection lands (refresh itself re-checks the symbol).
+        crate::panels::reload_on_connect::<Self>(this.table.downgrade(), cx);
         this
     }
 

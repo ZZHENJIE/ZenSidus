@@ -93,7 +93,8 @@ TCP——行情、新闻与全部查询都经由它。
 | `anysdk` | Alpaca/Finviz SDK 用法、端点/流规范、实测坑位(server 侧上游对接) |
 | `gpui-kit` | GPUI Kit 框架的组件/GPUI 机制权威指南 |
 | `gpui-kit-design-guides` | 界面设计规范 |
-| `zensidus-app` | **本项目 client 代码**:窗口/面板/对话框系统、Hub、设置持久化、实测陷阱 |
+| `zensidus-client` | **本项目 client 代码**:窗口/面板/对话框系统、Hub、设置持久化、实测陷阱 |
+| `zensidus-server` | **本项目 server 代码**:线协议契约、会话/订阅聚合/RPC、server.toml、部署(install-server.sh + systemd) |
 
 ## 开发
 
@@ -108,4 +109,4 @@ cargo clippy --workspace     # 静态检查
 
 ## License
 
-MIT
+[MIT](./LICENSE) © 2026 ZZHENJIE

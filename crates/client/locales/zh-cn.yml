@@ -76,7 +76,6 @@ app:
   stock_news:
     empty: 搜索代码查看资讯
     failed: 获取资讯失败
-    no_credentials: 先连接服务器,见设置的服务器页
     headline: 标题
     source: 来源
     updated_at: 更新时间
@@ -98,7 +97,6 @@ app:
     edit_preset: 编辑参数
     delete_preset: 删除参数
     delete_confirm: "删除参数“%{name}”？此操作不可撤销。"
-    no_server: 先连接服务器,见设置的服务器页
     empty: 从工具栏选择预设加载数据
     failed: 筛选器请求失败,详情见消息中心
     no_data: 预设没有返回数据
@@ -129,7 +127,6 @@ app:
     exchanges_hint: 多选;每个交易所一张表,ask 或 bid 挂在该所且量达标即计入
     min_size: 最小挂单量
     min_size_hint: ask 或 bid 挂单量需不小于此值,0 表示不限
-    no_server: 先连接服务器,见设置的服务器页
 
   # ── 面板文案:Trades(逐笔成交)────────────────────────────────────────
   trades:
@@ -357,4 +354,3 @@ app:
     network_time_failed: "获取网络时间失败,已使用本地时钟:%{err}"
     calendar_parse_failed: "经济日历数据解析失败:%{err}"
     calendar_fetch_failed: "获取经济日历失败:%{err}"
-    server_not_connected: "服务器未连接"

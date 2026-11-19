@@ -95,6 +95,9 @@ impl Panel for MarketScreenerPanel {
                 ServerStatus::Connected => {
                     this.set_connected(true, cx);
                     this.refresh_pump(cx);
+                    // The startup pool fetch is skipped silently while
+                    // offline; pull it now that the route is up.
+                    this.fetch(cx);
                 }
                 _ => {
                     this.set_connected(false, cx);
@@ -428,12 +431,8 @@ impl MarketScreenerPanel {
             return;
         };
         // Finviz token 已下沉服务端;唯一的前置条件是 server 在线。
+        // 离线时静默跳过:启动自动加载等 Connected 后由订阅回调补抓。
         let Ok(server) = AppState::server(cx) else {
-            message::error(
-                tr!("app.market_screener.no_server"),
-                anyhow::anyhow!("server is not connected"),
-                cx,
-            );
             return;
         };
         let parameter = super::screener_parameter_dto(&parameter);

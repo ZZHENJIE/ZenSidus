@@ -180,4 +180,4 @@ SettingsWindow::open(cx);
 - 操作已打开的窗口一律 `cx.defer`(窗口自己的回调里 `handle.update` 自己会失败)
 
 更多框架机制见 `.agents/skills/gpui-kit/`;本项目窗口/面板架构与实测陷阱
-(窗口重入、DOCK_VERSION、serde 兼容等)见 `.agents/skills/zensidus-app/`。
+(窗口重入、DOCK_VERSION、serde 兼容等)见 `.agents/skills/zensidus-client/`。

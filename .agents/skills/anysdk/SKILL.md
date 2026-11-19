@@ -147,5 +147,5 @@ cargo test -p client        # settings 往返(含 Feed serde 兼容)等
 ```
 
 设置兼容性红线:`Feed` 与 screener `Parameter` 的 serde 格式改动会破坏用户的
-`settings.json`(详见 zensidus-app skill 的设置持久化节),改前先跑
+`settings.json`(详见 zensidus-client skill 的设置持久化节),改前先跑
 `cargo test -p client`。

@@ -19,7 +19,7 @@ use tokio::sync::broadcast;
 
 use crate::panels::{Panel, refresh_button};
 use crate::tr;
-use crate::utils::state::AppState;
+use crate::utils::state::{AppState, ServerStatus};
 use crate::utils::{AppIcon, message};
 use crate::widgets::datatable::{self, Loadable as _, MarketNewsDelegate};
 
@@ -151,7 +151,16 @@ impl Panel for MarketNewsPanel {
         // Follow settings changes (e.g. a language switch) to retranslate
         // the column headers, and attach once the hub reports `Connected`.
         let hub = cx.global::<AppState>().hub.clone();
-        cx.observe(&hub, |this, _, cx| this.try_attach(cx)).detach();
+        cx.observe(&hub, |this, hub, cx| {
+            let was_attached = this.pump.is_some();
+            this.try_attach(cx);
+            // First attach after a fresh connect: the startup backfill was
+            // skipped silently while offline, so pull the recent page now.
+            if !was_attached && matches!(hub.read(cx).status(), ServerStatus::Connected) {
+                Self::backfill(this.table.downgrade(), cx);
+            }
+        })
+        .detach();
         cx.observe_global_in::<AppState>(window, |_, _, cx| cx.notify())
             .detach();
         // Attach right away when the server is already up (panel re-created

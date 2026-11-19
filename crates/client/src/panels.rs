@@ -38,6 +38,7 @@ use gpui_kit::{
 
 use crate::tr;
 use crate::utils::AppIcon;
+use crate::utils::state::{AppState, HubEvent, ServerStatus};
 use crate::widgets::icon_button;
 
 /// What every ZenSidus panel adds on top of gpui-kit's dock traits.
@@ -175,6 +176,23 @@ pub(super) fn refresh_button<P: Panel>(
         false,
         move |_, _, cx| P::refresh(entity.clone(), cx),
     )
+}
+
+/// Re-run the panel's data load when the hub reports a fresh `Connected`:
+/// startup auto-load stays silent while the server is down and the panel
+/// fills in once the connection lands (reconnects included). Wire it in
+/// `new` right after the startup fetch.
+pub(crate) fn reload_on_connect<P>(data: WeakEntity<P::DataEntity>, cx: &mut Context<P>)
+where
+    P: Panel + 'static,
+{
+    let hub = cx.global::<AppState>().hub.clone();
+    cx.subscribe(&hub, move |_, hub, _: &HubEvent, cx| {
+        if matches!(hub.read(cx).status(), ServerStatus::Connected) {
+            P::refresh(data.clone(), cx);
+        }
+    })
+    .detach();
 }
 
 fn info_payload(state: &PanelState) -> &serde_json::Value {

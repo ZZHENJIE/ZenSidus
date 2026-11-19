@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context as _;
 use chrono::{TimeZone, Utc};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -565,7 +566,10 @@ trait AsyncReadWrite: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> AsyncReadWrite for T {}
 
 async fn connect_stream(config: &ServerConfig) -> anyhow::Result<BoxStream> {
-    let tcp = tokio::net::TcpStream::connect(&config.addr).await?;
+    // 带上目标地址:解析失败(如缺端口)与远端 RST 在日志里才分得清。
+    let tcp = tokio::net::TcpStream::connect(&config.addr)
+        .await
+        .with_context(|| format!("tcp connect {}", config.addr))?;
     tcp.set_nodelay(true)?;
     if !config.tls {
         return Ok(Box::new(tcp));

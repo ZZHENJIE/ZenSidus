@@ -84,8 +84,12 @@ pub fn load_rows<D, Fut>(
     let Some(table) = table.upgrade() else {
         return;
     };
+    // Startup auto-load calls this for every panel while the server may
+    // still be down: skip silently (the panel reloads when the hub reports
+    // `Connected`, see `panels::reload_on_connect`) instead of stacking one
+    // error per panel into the message center.
     let Ok(server) = crate::utils::state::AppState::server(cx) else {
-        message::error(error_title, anyhow::anyhow!("server is not connected"), cx);
+        tracing::debug!("{}: server is not connected", error_title);
         return;
     };
     let generation = table.update(cx, |state, cx| {

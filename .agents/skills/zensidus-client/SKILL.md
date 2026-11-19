@@ -1,16 +1,15 @@
 ---
-name: zensidus-app
-description: 'Architecture, conventions and hard-won pitfalls of the ZenSidus app crate (crates/client): window management (AppWindow/DockWindow, singleton vs multi-instance, WindowRegistry, persistence, gpui-kit Root wrapper, the main-window quit dialog), the dock panel system (hand-written Panel trait with DataEntity/refresh, no macro), widgets/dialog + widgets/datatable conventions, Hub shared server subscriptions + ServerClient RPC/push, status bar/message center, settings persistence, i18n/theme. Use when touching any file under crates/client — adding windows or panels or dialogs, changing window open/close/persistence behavior, wiring server data into panels, or debugging "window not found", dialogs crashing the app, layouts not restoring, or settings being reset.'
+name: zensidus-client
+description: 'Architecture, conventions and hard-won pitfalls of the ZenSidus client crate (crates/client): window management (AppWindow/DockWindow, singleton vs multi-instance, WindowRegistry, persistence, gpui-kit Root wrapper, the main-window quit dialog), the dock panel system (hand-written Panel trait with DataEntity/refresh, no macro), widgets/dialog + widgets/datatable conventions, Hub shared server subscriptions + ServerClient RPC/push, status bar/message center, settings persistence, i18n/theme. Use when touching any file under crates/client — adding windows or panels or dialogs, changing window open/close/persistence behavior, wiring server data into panels, or debugging "window not found", dialogs crashing the app, layouts not restoring, or settings being reset. For the server crate see the zensidus-server skill.'
 ---
 
-# ZenSidus App (crates/client)
+# ZenSidus Client (crates/client)
 
-项目级技能:本 crate 的架构决定与**实测陷阱**。GPUI/gpui-kit 框架机制
+项目级技能:client crate 的架构决定与**实测陷阱**。GPUI/gpui-kit 框架机制
 (element/entity/context/async/组件选型)见 `gpui-kit` 与 `gpui-kit-design-guides`
 技能,本文件不重复;但**本 fork + 本项目已踩过**的 API 事实在下方速查节。
-面向人的图文教程在 `dev-docs/`(docsify 站):`guides/add-panel.md`(添加面板)、
-`guides/add-window.md`(添加窗口,含多实例)、`guides/conventions.md`(约定与陷阱)、
-`architecture.md`(架构速览)——其中的示例代码编译验证过,改面板/窗口时可参考。
+server crate(协议/部署/上游对接)见 `zensidus-server` 技能;上游 SDK
+(Alpaca/Finviz)细节见 `anysdk` 技能。
 
 ## 项目地图
 
@@ -74,7 +73,7 @@ crates/client/src/
 独立 `NewsStream`、`gateway_sdk` 已全部退役;Alpaca/Finviz/DeepSeek 凭据在
 **server 侧** `server.toml`,客户端只持 server token(连接对话框输入,
 仅本会话内存态,不落盘;keyring 已于 2026-11 移除)。
-server 的上游对接细节见 `anysdk` 技能与 `crates/server/README.md`。
+server 侧架构与部署见 `zensidus-server` 技能;上游 SDK 细节见 `anysdk` 技能。
 
 数据文件(`~/.zensidus/`):`settings.json`(全部状态:主题/语言/server 地址/
 translate/watchlists/window_state 含各窗口 cache;token 不落盘)、`logs/`
@@ -227,14 +226,15 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
 - **`refresh(entity: WeakEntity<Self::DataEntity>, cx)` 是静态钩子**,语义 =
   "把数据从源重载进 DataEntity";`new` 构建时调用一次 = 启动自动加载;
   数据变化(搜索确认/设置变更)也复用它。需要额外上下文(如 symbol)就
-  下沉进 delegate——refresh 只拿得到 DataEntity 的弱引用
+  下沉进 delegate——refresh 只拿得到 DataEntity 的弱引用。
+  **启动时 server 未连接 = 静默跳过**(不发请求、不进消息中心),表格面板
+  在 `new` 里再接一行 `crate::panels::reload_on_connect::<Self>(table.downgrade(), cx)`,
+  连接建立(含重连)后自动补一次加载
 - **远程表格统一走 `datatable::load_rows(table, error_title, |http| async {…}, cx)`**:
   delegate 实现 `Loadable`(`type Row` + `loading_mut` + `rows_mut`),helper
-  负责置 loading → spawn → 写回 rows 或 clear+`message::error`。**凭据/Key
-  守卫放在调 `load_rows` 之前**(Screener `finviz_api_key`、StockNews
-  `alpaca_credentials`:缺则推"未设置,去设置页"消息并 return,不发请求、
-  不碰 loading)。`render_loading`/`render_empty` 用 `datatable::loading_view()`
-  / `empty_view(text, cx)`
+  负责置 loading → spawn → 写回 rows 或 clear+`message::error`;
+  **离线时 helper 静默 return**(不置 loading、不报错)。`render_loading`/
+  `render_empty` 用 `datatable::loading_view()` / `empty_view(text, cx)`
 - **列头本地化(语言切换即时生效)两个条件缺一不可**:`column()` **实时 `t!` 生成** Column(Watchlist/IPO/StockNews/Economic 模式;把 `t!` 快照进 `columns` 字段则切换后仍是旧串)+ 面板注册 `observe_global_in::<AppState>`(数据不依赖 settings 的面板 observer 只 `cx.notify()`)。Screener 表头来自 CSV 数据本身,语言无关
 - **动态列表格**(如 StockScreener 的 CSV 导出):headers → Column,行存原始字符串;**换列后必须 `TableState::refresh(cx)`**(列组是构造时快照,见陷阱);双击列宽适配走 `fit_column` → `datatable::measure_text`
 - **数据下沉**:TableDelegate 等数据实现放 `widgets/datatable/`,目录与
@@ -268,9 +268,9 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
   返回类型直接是文本槽位要的 `SharedString`,免 `.to_string()/.into()` 拼接)
   (gpui-kit 所有文字槽位的类型);需要 `String` 做拼接时才用 `t!(..).to_string()`
 - **凭据守卫**:RPC 消费方的在线守卫是 `AppState::server(cx) -> Result<ServerClient>`
-  (server 未连接即 Err;news 族面板用 `panels::news::server_rpc` 包装成"未连接 +
-  去设置页"消息);`ServerStatus::{label(), reason(), color(cx)}` 是状态条与设置页
-  共用的展示映射
+  (server 未连接即 Err;`panels::news::server_rpc` 把它压成 `None`——离线
+  静默跳过,2026-11 起离线 RPC 一律不进消息中心);`ServerStatus::{label(),
+  reason(), color(cx)}` 是状态条与设置页共用的展示映射
 - **MessageLog**(utils/message.rs,Global):`message::{error,warning,info,success}`
   推送即通知 `observe_global::<MessageLog>` 观察者(状态栏/主窗口零接线);
   状态栏左侧显示 `last()`,点击弹 `latest_first()` 历史 Popover。
@@ -326,8 +326,8 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
   `window_handle.update(cx, |_, window, cx| window.close_dialog(cx))`
 - **Dialog 宽度显式 `dialog.width(px(N))`**:不设时内容比它宽会静默裁切
 - 翻译对话框(translate.rs):footer = from/to 语言下拉 + 刷新按钮;语言存
-  `settings.translate`,枚举用 gateway_sdk 的 `Lang`(`From<&str>`,
-  zh 前缀→ZHCN);切语言落盘但不自动重发,刷新才重发
+  `settings.translate`(rust-i18n locale 字符串,无枚举);切语言落盘但不
+  自动重发,刷新才重发
 - 搜索对话框(search_symbol.rs):Input Group(前置搜索图标 + 后置刷新按钮
   `.loading(searching)`);300ms 防抖 + generation 代数防乱序;**组内按钮
   on_click 要回焦输入框**(`input.read(cx).focus_handle(cx).focus(window, cx)`)
@@ -362,7 +362,7 @@ title / dock_name / default_bounds / window_options / init 的 match 分支
 `OpenX` 动作 + `widgets/menu/windows.rs` 加菜单项与 `on_action`。
 
 **测试入口**:自动化测试在 `cargo test -p client --lib`(settings 往返、i18n 一致
-性)与 `cargo test -p gateway_sdk`(finviz 行换算/周窗口);对话框/搜索等交互目前
+性)与 `cargo test -p server`(finviz 行换算/周窗口);对话框/搜索等交互目前
 手动验证,正式入口以后做在标题栏菜单。
 
 **i18n**:key 加进 `locales/en-us.yml` 和 `zh-cn.yml` 各一份,两份文件分节
@@ -372,14 +372,14 @@ title / dock_name / default_bounds / window_options / init 的 match 分支
 (写成 `{name}` 不会报错但永远不替换);tracing 日志文本走 `app.log.*`
 (上游错误值作 `%{err}` 参数保持原文);删功能时同步清 key,别留孤儿。
 翻译语言枚举用
-gateway_sdk `Lang`(`From<&str>` 按 zh 前缀判别)。
+语言值即 rust-i18n locale 字符串(`en-us`/`zh-cn`)。
 **locale 名 = 文件名 stem,rust-i18n 精确匹配不折叠大小写**:`set_locale` 传了
 不存在的名字(如 `en-US` vs 文件 `en-us.yml`)不报错,**全部 `t!` 返回裸 key**。
 全项目统一**小写**(`en-us`/`zh-cn`),语言列表唯一来源是
 `settings::LANGUAGES`(默认值、设置页下拉框都从它取),
 `settings.rs` 的 `languages_match_locale_files` 测试守住文件名与常量一致。
 另外 rust-i18n 4.2.4 的宏不向 cargo 登记 YAML 文件:**只改 YAML 不改 .rs 不会
-重编译**,新 key 不生效先 `touch` 任一 .rs 或 `cargo clean -p app`。
+重编译**,新 key 不生效先 `touch` 任一 .rs 或 `cargo clean -p client`。
 
 **图标**:SVG 放 `assets/icons/`,统一 **lucide 线稿**:viewBox 24、
 `fill="none"`、`stroke="currentColor"`、`stroke-width="2"`、圆角
@@ -390,7 +390,7 @@ gateway_sdk `Lang`(`From<&str>` 按 zh 前缀判别)。
 
 ## 验证清单
 
-1. `cargo check -p app --all-targets && cargo clippy -p app --all-targets &&
+1. `cargo check -p client --all-targets && cargo clippy -p client --all-targets &&
    cargo test -p client --lib`(当前 **clippy 零警告**,不要新增)
 2. **UI 可见测试由用户手动做,自动化只做启动 + PrintWindow 截图验证渲染;
    交互链路给编号步骤清单**(合成点击已证明不可靠:窗口枚举只读首字符、

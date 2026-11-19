@@ -85,6 +85,9 @@ impl Panel for EconomicCalendarPanel {
         cx.observe_global_in::<AppState>(window, |_, _, cx| cx.notify())
             .detach();
         Self::fetch(this.table.downgrade(), cx);
+        // Offline at startup: the fetch above was skipped silently; load
+        // once the connection lands.
+        crate::panels::reload_on_connect::<Self>(this.table.downgrade(), cx);
         this
     }
 

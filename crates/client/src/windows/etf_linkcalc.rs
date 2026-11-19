@@ -181,7 +181,12 @@ impl AppWindow for ETFLinkCalcWindow {
         // the quotes (the last values are stale by then).
         cx.subscribe(&hub, |this, hub, _: &HubEvent, cx| {
             match hub.read(cx).status() {
-                ServerStatus::Connected => this.refresh_pump(cx),
+                ServerStatus::Connected => {
+                    this.refresh_pump(cx);
+                    // The startup snapshot fetch is skipped silently while
+                    // offline; anchor the opens now that the route is up.
+                    this.fetch_opens(cx);
+                }
                 _ => this.drop_quotes(cx),
             }
         })

@@ -95,6 +95,9 @@ impl Panel for StockScreenerPanel {
         if this.preset(cx).is_some() {
             Self::fetch(this.table.downgrade(), cx);
         }
+        // Offline at startup: the fetch above was skipped silently; load
+        // once the connection lands (refresh itself re-checks the preset).
+        crate::panels::reload_on_connect::<Self>(this.table.downgrade(), cx);
         this
     }
 
@@ -155,12 +158,9 @@ impl StockScreenerPanel {
             return;
         };
         // Finviz token 已下沉服务端;唯一的前置条件是 server 在线。
+        // 离线时静默跳过:启动自动加载等 Connected 后由 reload_on_connect 补,
+        // 手动刷新则等连接后自然生效。
         let Ok(server) = AppState::server(cx) else {
-            message::error(
-                tr!("app.stock_screener.no_server"),
-                anyhow::anyhow!("server is not connected"),
-                cx,
-            );
             return;
         };
         let parameter = super::screener_parameter_dto(&parameter);
