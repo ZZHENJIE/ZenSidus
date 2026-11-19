@@ -113,7 +113,7 @@ struct Inner {
     news_tx: broadcast::Sender<NewsData>,
     progress_tx: broadcast::Sender<(u32, u64)>,
     status_tx: broadcast::Sender<RelayStatus>,
-    clock: ClockEstimate,
+    clock: Arc<ClockEstimate>,
     next_rpc_id: AtomicU32,
 }
 
@@ -139,7 +139,7 @@ impl RelayClient {
             news_tx,
             progress_tx,
             status_tx,
-            clock: ClockEstimate::default(),
+            clock: Arc::new(ClockEstimate::default()),
             next_rpc_id: AtomicU32::new(1),
         });
 
@@ -210,9 +210,10 @@ impl RelayClient {
         self.inner.status_tx.subscribe()
     }
 
-    /// 对时估计(`(offset_ms, rtt_ms)`,尚无样本为 `None`)。
-    pub fn clock(&self) -> &ClockEstimate {
-        &self.inner.clock
+    /// 对时估计的共享句柄(`get()` 给 `(offset_ms, rtt_ms)`,尚无样本为
+    /// `None`)。`Arc` 共享:后台线程的 lag 探针拿它做延迟补偿。
+    pub fn clock(&self) -> Arc<ClockEstimate> {
+        Arc::clone(&self.inner.clock)
     }
 
     /// 强制断开并立即重连(staleness 看门狗换新路由)。

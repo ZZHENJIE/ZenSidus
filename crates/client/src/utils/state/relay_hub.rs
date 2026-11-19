@@ -132,6 +132,12 @@ impl RelayHub {
         self.relay.clone()
     }
 
+    /// The relay clock estimate, when the relay is up: lag 探针用它把
+    /// `oldest_max` 补偿成本真延迟。
+    pub fn clock(&self) -> Option<std::sync::Arc<crate::utils::relay::ClockEstimate>> {
+        self.relay.as_ref().map(|relay| relay.clock())
+    }
+
     /// Whether the relay client is up (status may still be Connecting).
     pub fn connected(&self) -> bool {
         self.relay.is_some()

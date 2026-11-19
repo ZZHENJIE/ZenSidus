@@ -42,14 +42,17 @@ pub type SharedSpec = Arc<RwLock<StreamSpec>>;
 
 /// Spawn the background drain stage for one panel on the executor's worker
 /// threads. Returns the foreground receiver of filtered batches (each batch
-/// = only messages the spec wants). Ends when the stream closes.
+/// = only messages the spec wants). Ends when the stream closes. `clock`
+/// (relay 对时估计)存在时,诊断行把 `oldest_max` 换算成本真延迟——原始
+/// 读数 = 本机时钟偏移 + 真延迟,不看补偿值没法验收线路。
 pub fn spawn_filter_stage(
     panel: &'static str,
     mut source: broadcast::Receiver<StockMessage>,
     spec: SharedSpec,
     tx: tokio::sync::mpsc::Sender<Vec<StockMessage>>,
+    clock: Option<Arc<crate::utils::relay::ClockEstimate>>,
 ) -> impl Future<Output = ()> {
-    let mut probe = Probe::default();
+    let mut probe = Probe::new(clock);
     async move {
         loop {
             let batch = match source.recv().await {
@@ -144,16 +147,33 @@ impl StreamSpec {
 
 /// Console diagnostics for one stage, one line per 2 seconds: total in,
 /// forwarded out, the oldest message age in the window, and dropped batches.
-#[derive(Default)]
+/// With the relay clock estimate available the age is compensated to the
+/// true end-to-end latency (raw reading = clock offset + real age).
 struct Probe {
+    clock: Option<Arc<crate::utils::relay::ClockEstimate>>,
     last_print: Option<std::time::Instant>,
     total_in: usize,
     forwarded: usize,
+    /// Raw age by the local clock (offset included).
     max_age_ms: i64,
+    /// Offset-compensated age — the number to judge the route by.
+    max_true_age_ms: i64,
     dropped: usize,
 }
 
 impl Probe {
+    fn new(clock: Option<Arc<crate::utils::relay::ClockEstimate>>) -> Self {
+        Self {
+            clock,
+            last_print: None,
+            total_in: 0,
+            forwarded: 0,
+            max_age_ms: 0,
+            max_true_age_ms: 0,
+            dropped: 0,
+        }
+    }
+
     fn lagged(&mut self, n: u64) {
         eprintln!("[lag] stage skipped {n} messages (receiver behind)");
     }
@@ -167,8 +187,15 @@ impl Probe {
         self.total_in += total_in;
         self.forwarded += forwarded;
         if let Some(oldest) = oldest {
-            let age = (chrono::Utc::now() - oldest).num_milliseconds().max(0);
-            self.max_age_ms = self.max_age_ms.max(age);
+            let raw = (chrono::Utc::now() - oldest).num_milliseconds().max(0);
+            // offset = 服务端钟 − 本地钟;raw 里含 +offset,减掉即真延迟
+            // (精度 ±RTT/2;无样本时不补偿)。
+            let true_age = match self.clock.as_ref().and_then(|clock| clock.get()) {
+                Some((offset_ms, _rtt)) => (raw - offset_ms).max(0),
+                None => raw,
+            };
+            self.max_age_ms = self.max_age_ms.max(raw);
+            self.max_true_age_ms = self.max_true_age_ms.max(true_age);
         }
     }
 
@@ -189,13 +216,21 @@ impl Probe {
         self.last_print = Some(std::time::Instant::now());
         let total_rate = (self.total_in as f64 / seconds).round() as usize;
         let forwarded_rate = (self.forwarded as f64 / seconds).round() as usize;
-        eprintln!(
-            "[lag] {panel}: in~{total_rate}/s fwd~{forwarded_rate}/s oldest_max={}ms dropped={}",
-            self.max_age_ms, self.dropped
-        );
+        if self.clock.is_some() {
+            eprintln!(
+                "[lag] {panel}: in~{total_rate}/s fwd~{forwarded_rate}/s oldest_max={}ms raw={}ms dropped={}",
+                self.max_true_age_ms, self.max_age_ms, self.dropped
+            );
+        } else {
+            eprintln!(
+                "[lag] {panel}: in~{total_rate}/s fwd~{forwarded_rate}/s oldest_max={}ms dropped={}",
+                self.max_age_ms, self.dropped
+            );
+        }
         self.total_in = 0;
         self.forwarded = 0;
         self.max_age_ms = 0;
+        self.max_true_age_ms = 0;
         self.dropped = 0;
     }
 }

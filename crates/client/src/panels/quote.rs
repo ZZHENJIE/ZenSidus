@@ -174,13 +174,14 @@ impl QuotePanel {
     /// panels' high-rate subscriptions fill the channel.
     fn refresh_pump(&mut self, cx: &mut Context<Self>) {
         let hub = cx.global::<AppState>().relay_hub.clone();
+        let clock = hub.read(cx).clock();
         let Some(rx) = hub.read(cx).stock_messages() else {
             return;
         };
         let spec = self.spec.clone();
         let (tx, mut rx_out) = tokio::sync::mpsc::channel(8);
         cx.background_executor()
-            .spawn(spawn_filter_stage("quote", rx, spec, tx))
+            .spawn(spawn_filter_stage("quote", rx, spec, tx, clock))
             .detach();
         self.pump = Some(cx.spawn(async move |this, cx| {
             while let Some(batch) = rx_out.recv().await {
