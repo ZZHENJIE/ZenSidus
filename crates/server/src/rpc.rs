@@ -9,11 +9,11 @@ use tokio::sync::mpsc;
 use crate::finviz_data;
 use crate::state::AppState;
 use crate::web;
-use relay_protocol::{
+use protocol::{
     Bar, EconomicItem, EarningsItem, Frame, NewsItem, RpcRequestPayload, RpcResponsePayload,
     ScreenerExport, ScreenerParameter, SnapshotItem,
 };
-use relay_protocol::rpc::SearchItem;
+use protocol::rpc::SearchItem;
 
 /// 处理一个 RPC 请求。`rpc_id` 是请求 id(RestProgress 帧用它回填 req_id);
 /// `progress_tx` 是该会话的下行出口(bars 进度帧专用)。
@@ -189,8 +189,8 @@ fn bar_from_rest(bar: anysdk::alpaca_sdk::bars::Bar) -> Bar {
 fn quote_from_rest(
     symbol: String,
     quote: anysdk::alpaca_sdk::quotes::Quote,
-) -> relay_protocol::QuoteData {
-    relay_protocol::QuoteData {
+) -> protocol::QuoteData {
+    protocol::QuoteData {
         symbol,
         bid_exchange: quote.bid_exchange,
         bid_price: quote.bid_price,
@@ -205,8 +205,8 @@ fn quote_from_rest(
 fn trade_from_rest(
     symbol: String,
     trade: anysdk::alpaca_sdk::trades::Trade,
-) -> relay_protocol::TradeData {
-    relay_protocol::TradeData {
+) -> protocol::TradeData {
+    protocol::TradeData {
         symbol,
         id: trade.id,
         exchange: trade.exchange,

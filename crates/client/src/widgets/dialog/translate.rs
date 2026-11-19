@@ -16,7 +16,7 @@ use gpui_kit::{
     div, px,
 };
 
-use relay_protocol::{RpcRequestPayload, RpcResponsePayload};
+use protocol::{RpcRequestPayload, RpcResponsePayload};
 
 use crate::tr;
 use crate::utils::settings::{self, LANGUAGES, language_label};

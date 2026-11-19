@@ -23,7 +23,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use anysdk::alpaca_stream::StockMessage;
 use anysdk::alpaca_stream::stocks::{BarMessage, QuoteMessage, TradeMessage};
-use relay_protocol::{BarData, Channels, Frame, NewsData, RpcRequestPayload, RpcResponsePayload};
+use protocol::{BarData, Channels, Frame, NewsData, RpcRequestPayload, RpcResponsePayload};
 
 /// 推送广播容量:与旧 anysdk 流一致。
 const STOCK_CAPACITY: usize = 4096;
@@ -520,9 +520,9 @@ fn frame_to_stock_message(frame: Frame) -> Option<StockMessage> {
                 time: ms_to_time(time_ms),
             };
             Some(match kind {
-                relay_protocol::BarKind::Minute => StockMessage::MinuteBar(bar),
-                relay_protocol::BarKind::Updated => StockMessage::UpdatedBar(bar),
-                relay_protocol::BarKind::Daily => StockMessage::DailyBar(bar),
+                protocol::BarKind::Minute => StockMessage::MinuteBar(bar),
+                protocol::BarKind::Updated => StockMessage::UpdatedBar(bar),
+                protocol::BarKind::Daily => StockMessage::DailyBar(bar),
             })
         }
         _ => None,
@@ -542,18 +542,18 @@ fn write_frame<'a>(
     stream: &'a mut Box<dyn AsyncReadWrite>,
     frame: &'a Frame,
 ) -> impl Future<Output = io::Result<()>> + Send + 'a {
-    let bytes = relay_protocol::encode_frame(frame);
+    let bytes = protocol::encode_frame(frame);
     async move { stream.write_all(&bytes).await }
 }
 
 /// 帧解码器包装(读循环用)。
 #[derive(Default)]
 struct FrameDecoderBuf {
-    decoder: relay_protocol::FrameDecoder,
+    decoder: protocol::FrameDecoder,
 }
 
 impl FrameDecoderBuf {
-    fn feed(&mut self, bytes: &[u8]) -> Result<Vec<Frame>, relay_protocol::FrameDecodeError> {
+    fn feed(&mut self, bytes: &[u8]) -> Result<Vec<Frame>, protocol::FrameDecodeError> {
         self.decoder.feed(bytes)
     }
 }

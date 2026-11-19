@@ -9,7 +9,7 @@
 ```
 crates/
 ├── client/           GPUI Kit 桌面客户端(窗口/面板系统、组件、主题、i18n、消息中心)
-├── relay-protocol/   client ↔ relay-server 线协议(TCP + postcard 帧,唯一契约)
+├── protocol/   client ↔ relay-server 线协议(TCP + postcard 帧,唯一契约)
 └── server/           relay-server:自建行情中转服务(VPS 常驻,见 crates/server/README.md)
 ```
 
@@ -23,7 +23,7 @@ crates/
 ## 快速开始
 
 ```bash
-cargo run -p relay-server -- crates/server/server.toml   # 先起服务(cp server.toml.example 填凭据)
+cargo run -p server -- crates/server/server.toml   # 先起服务(cp server.toml.example 填凭据)
 cargo run -p client                                       # 再起客户端
 ```
 
@@ -74,7 +74,7 @@ relay TCP——行情、新闻与全部查询都经由它。
 └────────────────────────────────────────────────────────┘
 ```
 
-- **relay-protocol**:线上唯一契约(`[u32 LE 长度][postcard Frame]`):
+- **protocol**:线上唯一契约(`[u32 LE 长度][postcard Frame]`):
   Hello/Welcome 认证对时、Ping/Pong 心跳、Subscribe/Unsubscribe 订阅协商
   (symbol 名,服务端 intern)、Quote/Trade/Bar/News 推送、RPC 请求-响应
   (bars 带翻页进度帧)

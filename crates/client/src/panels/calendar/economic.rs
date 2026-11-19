@@ -2,7 +2,7 @@
 //! for the current week or a week picked in the date picker (Mondays only).
 
 use chrono::{Datelike, NaiveDate};
-use relay_protocol::{RpcRequestPayload, RpcResponsePayload};
+use protocol::{RpcRequestPayload, RpcResponsePayload};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, IntoElement,
     ParentElement as _, Render, Styled, WeakEntity, Window,

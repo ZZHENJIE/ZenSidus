@@ -14,7 +14,7 @@ use gpui_kit::{
     component::{button::Button, table::TableState},
     div,
 };
-use relay_protocol::{RpcRequestPayload, RpcResponsePayload};
+use protocol::{RpcRequestPayload, RpcResponsePayload};
 use tokio::sync::broadcast;
 
 use crate::panels::{Panel, refresh_button};
@@ -111,7 +111,7 @@ impl MarketNewsPanel {
                             .update(cx, |state, cx| {
                                 if state
                                     .delegate_mut()
-                                    .merge_articles(vec![relay_protocol::NewsItem::from(news)])
+                                    .merge_articles(vec![protocol::NewsItem::from(news)])
                                 {
                                     cx.notify();
                                 }

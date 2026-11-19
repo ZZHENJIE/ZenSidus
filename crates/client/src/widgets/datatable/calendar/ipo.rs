@@ -10,13 +10,13 @@ use crate::widgets::datatable::{self, Loadable};
 
 #[derive(Clone)]
 pub struct IPODelegate {
-    pub(crate) data: Vec<relay_protocol::IpoItem>,
+    pub(crate) data: Vec<protocol::IpoItem>,
     pub(crate) is_loading: bool,
     fetch_generation: u64,
 }
 
 impl IPODelegate {
-    pub fn new(data: Vec<relay_protocol::IpoItem>) -> Self {
+    pub fn new(data: Vec<protocol::IpoItem>) -> Self {
         Self {
             data,
             is_loading: false,
@@ -51,7 +51,7 @@ impl IPODelegate {
 }
 
 impl Loadable for IPODelegate {
-    type Row = relay_protocol::IpoItem;
+    type Row = protocol::IpoItem;
 
     fn loading_mut(&mut self) -> &mut bool {
         &mut self.is_loading

@@ -2,7 +2,7 @@
 //! opens the headline in the translate dialog; Ctrl + click opens the
 //! article URL.
 
-use relay_protocol::NewsItem;
+use protocol::NewsItem;
 use gpui_kit::{
     App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
     Stateful, StatefulInteractiveElement as _, Styled as _, Window,

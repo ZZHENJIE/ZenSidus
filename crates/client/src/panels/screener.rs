@@ -7,7 +7,7 @@ pub mod stock;
 pub use market::MarketScreenerPanel;
 pub use stock::StockScreenerPanel;
 
-use relay_protocol::ScreenerParameter;
+use protocol::ScreenerParameter;
 
 /// settings 里保存的 finviz 参数 → 协议 DTO(`screener_type` 取线值,
 /// 如 `stocks`/`etf`)。token 已下沉服务端,这里只搬参数本身。

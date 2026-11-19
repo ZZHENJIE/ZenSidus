@@ -1,7 +1,7 @@
 # ZenSidus App — 功能清单与数据层重构设计
 
 > 状态:**已实施**(2026-11,commit P0a–P3:crates/app → crates/client、
-> 新增 crates/relay-protocol 与 crates/server、全部面板迁移到 relay TCP/postcard;
+> 新增 crates/protocol 与 crates/server、全部面板迁移到 relay TCP/postcard;
 > 与实现有出入处以代码为准——`Channels` 在草图 4 通道外拆出 `DAILY`,
 > 推送载荷结构化,`RestProgress` 为 D2 新增帧)。
 > 目标:数据获取全面迁移到自建服务器,**全程 TCP + postcard 二进制协议,彻底移除 HTTP/WS 依赖**。
@@ -464,7 +464,7 @@ pub struct RelayClient {
 ## Part 3 — 迁移路线(建议的实施顺序)
 
 ### 阶段 0:协议 crate(半天)
-`relay-protocol`(或并入 AnySDK):Frame/DTO + postcard derive + 编解码往返单测。
+`protocol`(或并入 AnySDK):Frame/DTO + postcard derive + 编解码往返单测。
 
 ### 阶段 1:relay-server 骨架 + 股票流(1-2 天)
 TCP listener + Hello/Welcome + 心跳 + 上游股票 WS 接入 + Quote/Trade/Bar 推送 + 订阅协商。

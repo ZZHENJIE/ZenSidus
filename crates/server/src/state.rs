@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::executor::{AlpacaClient, FinvizClient};
 use crate::hub::{HubDiff, SubscriptionHub};
 use crate::mapping;
-use relay_protocol::Frame;
+use protocol::Frame;
 
 /// 上游订阅命令(actor 顺序执行,保序)。
 #[derive(Debug)]

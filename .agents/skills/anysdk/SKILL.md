@@ -40,7 +40,7 @@ let alpaca = AlpacaClient::new(http.clone(), key_id, secret, ReqwestExecutor);
 let finviz = FinvizClient::new(http.clone(), &finviz_token, ReqwestExecutor);
 ```
 
-客户端侧消费的是 relay-protocol 帧(见 `crates/relay-protocol`),不直接触碰
+客户端侧消费的是 protocol 帧(见 `crates/protocol`),不直接触碰
 anysdk——只引用它的消息类型(`StockMessage` 等)做形状映射。
 
 - 客户端无 `Clone`:改凭据走 **重建整个客户端**(`AppState::sync_clients`),

@@ -20,7 +20,7 @@ serde_json = { workspace = true }
 anysdk = { workspace = true }
 
 # relay 线协议 + 传输(TCP,可选 TLS;Nginx 终结 TLS 时客户端按固定证书校验)
-relay-protocol = { path = "../relay-protocol" }
+protocol = { path = "../protocol" }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 webpki-roots = "0.26"

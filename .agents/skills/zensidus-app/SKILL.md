@@ -64,7 +64,7 @@ crates/client/src/
 ```
 
 数据层分工(2026-11 relay 化后):**客户端唯一的对外连接是 `utils/relay.rs` 的
-`RelayClient`**——一条到 relay-server 的 TCP(`relay-protocol` 帧格式,postcard),
+`RelayClient`**——一条到 relay-server 的 TCP(`protocol` 帧格式,postcard),
 自带自动重连/心跳/RPC id 路由,推送帧映射回 anysdk 的 `StockMessage` 形状
 (`stream_dispatch` 级联不变)。hub 在 `utils/state/relay_hub.rs`(`RelayHub`:
 `SymbolWish` 并集聚合 + 每次 `Connected` 重放订阅 + staleness 看门狗)。面板数据

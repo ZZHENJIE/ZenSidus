@@ -951,7 +951,7 @@ dependencies = [
  "gpui-pre-http-client",
  "gpui-pre-reqwest-client",
  "keyring",
- "relay-protocol",
+ "protocol",
  "rodio",
  "rust-embed",
  "rust-i18n",
@@ -5864,6 +5864,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "protocol"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.2",
+ "postcard",
+ "serde",
+]
+
+[[package]]
 name = "pulp"
 version = "0.22.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6303,37 +6312,6 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
-
-[[package]]
-name = "relay-protocol"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.13.2",
- "postcard",
- "serde",
-]
-
-[[package]]
-name = "relay-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "anysdk",
- "chrono",
- "chrono-tz",
- "futures",
- "postcard",
- "relay-protocol",
- "reqwest",
- "scraper",
- "serde",
- "serde_json",
- "tokio",
- "toml 0.8.23",
- "tracing",
- "tracing-subscriber",
- "urlencoding",
-]
 
 [[package]]
 name = "renderdoc-sys"
@@ -7003,6 +6981,28 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "anysdk",
+ "chrono",
+ "chrono-tz",
+ "futures",
+ "postcard",
+ "protocol",
+ "reqwest",
+ "scraper",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
 ]
 
 [[package]]

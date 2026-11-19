@@ -24,7 +24,7 @@ use gpui_kit::{
     px,
 };
 
-use relay_protocol::{RpcRequestPayload, RpcResponsePayload, SearchItem};
+use protocol::{RpcRequestPayload, RpcResponsePayload, SearchItem};
 
 use crate::tr;
 use crate::utils::message;

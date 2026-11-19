@@ -9,7 +9,7 @@ use gpui_kit::{
     div,
 };
 
-use relay_protocol::{RpcRequestPayload, RpcResponsePayload};
+use protocol::{RpcRequestPayload, RpcResponsePayload};
 
 use crate::panels::{Panel, refresh_button};
 use crate::tr;

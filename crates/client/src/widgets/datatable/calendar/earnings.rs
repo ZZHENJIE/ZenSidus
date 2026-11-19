@@ -18,7 +18,7 @@ use crate::widgets::datatable::{self, Loadable};
 /// A trading day's rows; the fetch window is the picked day itself. The row
 /// is the export item with its (optional) time part already resolved to unix
 /// seconds (see `utils::finviz`).
-pub(crate) type EarningsItem = relay_protocol::EarningsItem;
+pub(crate) type EarningsItem = protocol::EarningsItem;
 
 #[derive(Clone)]
 pub struct EarningsDelegate {

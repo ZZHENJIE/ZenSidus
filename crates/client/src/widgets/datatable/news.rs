@@ -9,7 +9,7 @@ pub use stock::StockNewsDelegate;
 
 use chrono::Local;
 use gpui_kit::{App, ClickEvent, Window};
-use relay_protocol::NewsItem;
+use protocol::NewsItem;
 
 /// A news timestamp (epoch ms) shown as `MM-DD HH:MM` in the viewer's local
 /// time; shared by both delegates.

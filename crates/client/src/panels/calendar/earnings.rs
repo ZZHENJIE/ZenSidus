@@ -18,7 +18,7 @@ use gpui_kit::{
 use crate::panels::{Panel, refresh_button};
 use crate::tr;
 use crate::utils::AppIcon;
-use relay_protocol::{RpcRequestPayload, RpcResponsePayload};
+use protocol::{RpcRequestPayload, RpcResponsePayload};
 use crate::utils::state::AppState;
 use crate::widgets::datatable::{self, EarningsDelegate};
 

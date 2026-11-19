@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 
 use crate::state::AppState;
-use relay_protocol::{Frame, FrameDecoder};
+use protocol::{Frame, FrameDecoder};
 
 /// 认证前等待 Hello 的时限。
 const HELLO_TIMEOUT: Duration = Duration::from_secs(15);
@@ -25,7 +25,7 @@ pub async fn run(state: Arc<AppState>, stream: tokio::net::TcpStream) {
         let mut writer = writer;
         let mut rx = rx;
         while let Some(frame) = rx.recv().await {
-            let bytes = relay_protocol::encode_frame(&frame);
+            let bytes = protocol::encode_frame(&frame);
             if writer.write_all(&bytes).await.is_err() {
                 break;
             }
@@ -175,7 +175,7 @@ mod tests {
     use crate::config::Config;
     use crate::executor::{AlpacaClient, FinvizClient, ReqwestExecutor};
     use crate::hub::SubscriptionHub;
-    use relay_protocol::{Channels, FrameDecoder};
+    use protocol::{Channels, FrameDecoder};
 
     /// 本机回环:认证失败即断;正确 token 走 Hello→Welcome→Ping/Pong→
     /// Subscribe/Subscribed 全链路(不依赖真实上游)。
@@ -216,7 +216,7 @@ mod tests {
         let mut buf = [0u8; 4096];
 
         // Hello(正确 token)→ Welcome。
-        let bytes = relay_protocol::encode_frame(&Frame::Hello {
+        let bytes = protocol::encode_frame(&Frame::Hello {
             token: "secret-token".into(),
             app_version: "test".into(),
         });
@@ -239,7 +239,7 @@ mod tests {
 
         // Ping → Pong。
         stream
-            .write_all(&relay_protocol::encode_frame(&Frame::Ping))
+            .write_all(&protocol::encode_frame(&Frame::Ping))
             .await
             .unwrap();
         let n = stream.read(&mut buf).await.unwrap();
@@ -250,7 +250,7 @@ mod tests {
 
         // Subscribe → Subscribed{id}(hub 聚合不 panic;上游差量进 dummy 队列)。
         stream
-            .write_all(&relay_protocol::encode_frame(&Frame::Subscribe {
+            .write_all(&protocol::encode_frame(&Frame::Subscribe {
                 id: 9,
                 symbols: vec!["SPY".into()],
                 channels: Channels::TRADES | Channels::DAILY,
@@ -276,7 +276,7 @@ mod tests {
         });
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-        let bytes = relay_protocol::encode_frame(&Frame::Hello {
+        let bytes = protocol::encode_frame(&Frame::Hello {
             token: "wrong".into(),
             app_version: "test".into(),
         });

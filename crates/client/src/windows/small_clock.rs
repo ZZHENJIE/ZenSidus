@@ -7,7 +7,7 @@ use gpui_kit::{
     component::{ActiveTheme as _, Icon, WindowExt, notification::Notification, spinner::Spinner},
     div,
 };
-use relay_protocol::EconomicItem;
+use protocol::EconomicItem;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::error;
 
@@ -103,10 +103,10 @@ impl SmallClockWindow {
     async fn calendar_task(tx: UnboundedSender<Event>, relay: RelayClient) {
         let date = chrono::Utc::now().date_naive().to_string();
         match relay
-            .rpc_checked(relay_protocol::RpcRequestPayload::EconomicCalendar { date })
+            .rpc_checked(protocol::RpcRequestPayload::EconomicCalendar { date })
             .await
         {
-            Ok(relay_protocol::RpcResponsePayload::EconomicCalendar(rows)) => {
+            Ok(protocol::RpcResponsePayload::EconomicCalendar(rows)) => {
                 let _ = tx.send(Event::Calendar(rows));
             }
             Ok(other) => {

@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use anysdk::alpaca_stream::StockMessage;
 use anysdk::alpaca_stream::stocks::BarMessage;
 use chrono::NaiveDate;
-use relay_protocol::{RpcRequestPayload, RpcResponsePayload};
+use protocol::{RpcRequestPayload, RpcResponsePayload};
 use gpui_kit::{
     App, Context, Div, EntityId, Hsla, IntoElement, ParentElement as _, Render, SharedString,
     Styled as _, Task, Window,

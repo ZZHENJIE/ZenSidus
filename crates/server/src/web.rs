@@ -4,7 +4,7 @@
 use anyhow::Context;
 use serde_json::Value;
 
-use relay_protocol::{IpoItem, SearchItem};
+use protocol::{IpoItem, SearchItem};
 
 const FUTUNN_SEARCH_URL: &str = "https://www.futunn.com/search-stock/predict";
 const DEEPSEEK_URL: &str = "https://api.deepseek.com/chat/completions";

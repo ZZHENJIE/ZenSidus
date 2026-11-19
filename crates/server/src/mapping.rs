@@ -3,7 +3,7 @@
 //! Bar 由变体区分钟/更新/日线。非行情消息(订阅 echo、corrections、
 //! LULD 等)一期不下发。
 
-use relay_protocol::{BarData, BarKind, Frame, NewsData, QuoteData, TradeData};
+use protocol::{BarData, BarKind, Frame, NewsData, QuoteData, TradeData};
 
 /// 上游股票流消息 → 下行帧;`None` = 该消息不下发。
 pub fn stock_message_to_frame(message: anysdk::alpaca_stream::StockMessage) -> Option<Frame> {

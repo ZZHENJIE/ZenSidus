@@ -14,7 +14,7 @@ use gpui_kit::{
 };
 
 use anysdk::alpaca_stream::StockMessage;
-use relay_protocol::Channels;
+use protocol::Channels;
 use tokio::sync::broadcast;
 
 use crate::tr;

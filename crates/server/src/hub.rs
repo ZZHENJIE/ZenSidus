@@ -8,7 +8,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use anysdk::alpaca_stream::StockSubscription;
-use relay_protocol::Channels;
+use protocol::Channels;
 
 /// 一个客户端的意愿变更后,上游需要的差量。
 #[derive(Debug, Default)]

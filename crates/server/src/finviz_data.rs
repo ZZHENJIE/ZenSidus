@@ -6,7 +6,7 @@ use anyhow::Context;
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, TimeZone};
 use chrono_tz::America::New_York;
 
-use relay_protocol::{EconomicItem, EarningsItem};
+use protocol::{EconomicItem, EarningsItem};
 
 /// Convert a fetched economic export: every row's date/time cell becomes a
 /// millisecond timestamp; one unparsable cell fails the whole batch (the

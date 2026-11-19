@@ -90,8 +90,8 @@ cache,以及把窗口根包成 gpui-kit 的 `Root`(没有 Root,第一次弹对�
 ## 数据从哪来
 
 客户端唯一的对外连接是 `utils/relay.rs` 的 **RelayClient**:一条到 relay-server
-的 TCP(`relay-protocol` 帧格式,postcard),自带自动重连(指数退避)与心跳。
-协议契约在 `crates/relay-protocol`,server 侧对接见 `crates/server/README.md`。
+的 TCP(`protocol` 帧格式,postcard),自带自动重连(指数退避)与心跳。
+协议契约在 `crates/protocol`,server 侧对接见 `crates/server/README.md`。
 
 | 数据 | 路径 |
 |---|---|

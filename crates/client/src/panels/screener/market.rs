@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 
 use anysdk::alpaca_stream::StockMessage;
-use relay_protocol::{RpcRequestPayload, RpcResponsePayload};
+use protocol::{RpcRequestPayload, RpcResponsePayload};
 use gpui_kit::{
     AnyElement, App, Context, Entity, EntityId, EventEmitter, FocusHandle, InteractiveElement as _,
     IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
@@ -174,7 +174,7 @@ fn preset_names(cx: &App) -> Vec<String> {
 
 /// Ticker column of the market-screener export, located by header name (the
 /// SDK's market export pins the columns to No. + Ticker).
-fn extract_tickers(result: &relay_protocol::ScreenerExport) -> Vec<String> {
+fn extract_tickers(result: &protocol::ScreenerExport) -> Vec<String> {
     let Some(col) = result
         .headers
         .iter()

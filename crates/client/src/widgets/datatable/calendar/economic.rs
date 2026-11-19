@@ -18,7 +18,7 @@ use crate::{tr, widgets::dialog::translate};
 /// A calendar week's rows; the fetch window is the current Monday–Friday.
 /// The row is the export item with its US-Eastern wall clock already
 /// resolved to unix seconds (see `utils::finviz`).
-pub(crate) type EconomicItem = relay_protocol::EconomicItem;
+pub(crate) type EconomicItem = protocol::EconomicItem;
 
 #[derive(Clone)]
 pub struct EconomicDelegate {

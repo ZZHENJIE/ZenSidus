@@ -1,14 +1,14 @@
 # relay-server
 
 ZenSidus 行情中转服务:下游对 client 暴露一条 TCP(postcard 帧,协议见
-`relay-protocol`),上游经 AnySDK 对接 Alpaca 股票/新闻 WS 与 REST、Finviz
+`protocol`),上游经 AnySDK 对接 Alpaca 股票/新闻 WS 与 REST、Finviz
 Elite 导出,并本地实现搜索(futunn)/翻译(DeepSeek)/IPO(iposcoop)。
 
 ## 本地运行
 
 ```bash
 cp crates/server/server.toml.example crates/server/server.toml   # 填入凭据
-cargo run -p relay-server -- crates/server/server.toml
+cargo run -p server -- crates/server/server.toml
 ```
 
 `server.toml` 已 gitignore。本机开发翻墙:`[proxy] ws_socks5` 走 SOCKS5,
@@ -46,7 +46,7 @@ Description=ZenSidus relay server
 After=network-online.target
 
 [Service]
-ExecStart=/opt/relay-server/relay-server /etc/relay-server/server.toml
+ExecStart=/opt/relay-server/server /etc/relay-server/server.toml
 Restart=always
 RestartSec=3
 User=relay
@@ -60,7 +60,7 @@ WantedBy=multi-user.target
 Actions 页手动触发),musl 静态编译的 `relay-server-linux-amd64.tar.gz` 会自动
 发布到 Release(静态链接,任何 x86_64 Linux 发行版直接运行;main 分支每次 push
 也有 Linux 编译检查)。下载解压后把 `relay-server` 与 `server.toml` 放到服务器
-对应路径即可。备选:在有 Rust 的机器上 `cargo build --release -p relay-server`。
+对应路径即可。备选:在有 Rust 的机器上 `cargo build --release -p server`。
 
 ## 行为要点
 
