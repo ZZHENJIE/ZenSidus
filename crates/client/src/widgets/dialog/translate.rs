@@ -201,10 +201,10 @@ fn fetch(
 
     let state = state.clone();
     cx.spawn(async move |cx| {
-        let relay = cx.update(|cx| AppState::relay(cx));
-        let result = match relay {
-            Ok(relay) => {
-                match relay
+        let server = cx.update(|cx| AppState::server(cx));
+        let result = match server {
+            Ok(server) => {
+                match server
                     .rpc_checked(RpcRequestPayload::Translate {
                         from: from.clone(),
                         to: to.clone(),

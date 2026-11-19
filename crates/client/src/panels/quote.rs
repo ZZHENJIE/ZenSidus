@@ -21,7 +21,7 @@ use crate::panels::{Panel, panel_title};
 use crate::tr;
 use crate::utils::AppIcon;
 use crate::utils::state::stream_dispatch::{SharedSpec, StreamSpec, spawn_filter_stage};
-use crate::utils::state::{RelayHubEvent, RelayStatus, AppState, SymbolWish};
+use crate::utils::state::{HubEvent, ServerStatus, AppState, SymbolWish};
 use crate::widgets::dialog::open_search_symbol_dialog;
 use crate::widgets::icon_button;
 
@@ -86,14 +86,14 @@ impl Panel for QuotePanel {
             .and_then(|value| value.as_str())
             .map(|s| s.to_ascii_uppercase());
 
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
 
         // Connection status drives the message pump: connected attaches a
         // fresh broadcast receiver, any other status cancels it and drops
         // the quote (the last values are stale by then).
-        cx.subscribe(&hub, |this, hub, _: &RelayHubEvent, cx| {
+        cx.subscribe(&hub, |this, hub, _: &HubEvent, cx| {
             match hub.read(cx).status() {
-                RelayStatus::Connected => {
+                ServerStatus::Connected => {
                     this.set_connected(true, cx);
                     this.refresh_pump(cx);
                 }
@@ -156,7 +156,7 @@ impl QuotePanel {
             quotes: true,
             ..Default::default()
         };
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
         hub.update(cx, |hub, _| {
             hub.set_symbols(
                 self.subscriber,
@@ -173,7 +173,7 @@ impl QuotePanel {
     /// entity update per batch keeps the main thread cheap while other
     /// panels' high-rate subscriptions fill the channel.
     fn refresh_pump(&mut self, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
         let clock = hub.read(cx).clock();
         let Some(rx) = hub.read(cx).stock_messages() else {
             return;
@@ -394,7 +394,7 @@ impl gpui_kit::base::dock::Panel for QuotePanel {
     }
 
     fn on_removed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
         let subscriber = self.subscriber;
         hub.update(cx, |hub, _| {
             hub.set_symbols(subscriber, SymbolWish::default())

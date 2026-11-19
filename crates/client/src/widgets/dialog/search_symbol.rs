@@ -92,14 +92,14 @@ impl SearchSymbolState {
                 state.searching = true;
                 cx.notify();
             });
-            let Ok(relay) = cx.update(|cx| AppState::relay(cx)) else {
+            let Ok(server) = cx.update(|cx| AppState::server(cx)) else {
                 let _ = this.update(cx, |state, cx| {
                     state.searching = false;
                     cx.notify();
                 });
                 return;
             };
-            let result = relay
+            let result = server
                 .rpc_checked(RpcRequestPayload::Search {
                     keyword: keyword.clone(),
                     lang,

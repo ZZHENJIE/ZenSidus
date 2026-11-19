@@ -4,6 +4,10 @@ name: server
 # - linux-check:每次 main push / PR 确认 server 全依赖在 Linux 下编译通过;
 # - linux-release:打 `server-v*` tag(或手动触发)时,交叉产出 musl 静态
 #   Linux 二进制并发布到 GitHub Release——VPS 部署不需要本地有 Linux 机器。
+#
+# 产物只有一层压缩:zensidus-linux-amd64.zip(zensidus + server.toml.example +
+# install-server.sh + README)。Artifact 上传原始文件(下载时由 GitHub 打包
+# 成单层 zip),Release 只挂上面这一个 zip;VPS 侧用 install-server.sh 一键部署。
 
 on:
   push:
@@ -41,21 +45,22 @@ jobs:
         run: cargo build --release -p server --target x86_64-unknown-linux-musl
       - name: Package
         run: |
-          cd target/x86_64-unknown-linux-musl/release
-          tar czf "$GITHUB_WORKSPACE/server-linux-amd64.tar.gz" server
-          cd "$GITHUB_WORKSPACE"
-          cp crates/server/server.toml.example server.server.toml.example
+          cp target/x86_64-unknown-linux-musl/release/zensidus zensidus
+          cp crates/server/server.toml.example server.toml.example
+          cp crates/server/install-server.sh install-server.sh
           cp crates/server/README.md server.README.md
+          zip zensidus-linux-amd64.zip zensidus server.toml.example install-server.sh server.README.md
       - uses: actions/upload-artifact@v4
         with:
-          name: server-linux-amd64
+          name: zensidus-linux-amd64
           path: |
-            server-linux-amd64.tar.gz
-            server.server.toml.example
+            zensidus
+            server.toml.example
+            install-server.sh
             server.README.md
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/server-v')
         uses: softprops/action-gh-release@v2
         with:
-          files: server-linux-amd64.tar.gz
+          files: zensidus-linux-amd64.zip
           generate_release_notes: true

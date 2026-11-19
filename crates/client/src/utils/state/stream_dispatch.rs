@@ -43,14 +43,14 @@ pub type SharedSpec = Arc<RwLock<StreamSpec>>;
 /// Spawn the background drain stage for one panel on the executor's worker
 /// threads. Returns the foreground receiver of filtered batches (each batch
 /// = only messages the spec wants). Ends when the stream closes. `clock`
-/// (relay 对时估计)存在时,诊断行把 `oldest_max` 换算成本真延迟——原始
+/// (server 对时估计)存在时,诊断行把 `oldest_max` 换算成本真延迟——原始
 /// 读数 = 本机时钟偏移 + 真延迟,不看补偿值没法验收线路。
 pub fn spawn_filter_stage(
     panel: &'static str,
     mut source: broadcast::Receiver<StockMessage>,
     spec: SharedSpec,
     tx: tokio::sync::mpsc::Sender<Vec<StockMessage>>,
-    clock: Option<Arc<crate::utils::relay::ClockEstimate>>,
+    clock: Option<Arc<crate::utils::server::ClockEstimate>>,
 ) -> impl Future<Output = ()> {
     let mut probe = Probe::new(clock);
     async move {
@@ -154,10 +154,10 @@ fn lag_enabled() -> bool {
 
 /// Console diagnostics for one stage, one line per 2 seconds: total in,
 /// forwarded out, the oldest message age in the window, and dropped batches.
-/// With the relay clock estimate available the age is compensated to the
+/// With the server clock estimate available the age is compensated to the
 /// true end-to-end latency (raw reading = clock offset + real age).
 struct Probe {
-    clock: Option<Arc<crate::utils::relay::ClockEstimate>>,
+    clock: Option<Arc<crate::utils::server::ClockEstimate>>,
     last_print: Option<std::time::Instant>,
     total_in: usize,
     forwarded: usize,
@@ -169,7 +169,7 @@ struct Probe {
 }
 
 impl Probe {
-    fn new(clock: Option<Arc<crate::utils::relay::ClockEstimate>>) -> Self {
+    fn new(clock: Option<Arc<crate::utils::server::ClockEstimate>>) -> Self {
         Self {
             clock,
             last_print: None,

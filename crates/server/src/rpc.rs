@@ -116,10 +116,12 @@ pub async fn handle(
         }
 
         RpcRequestPayload::MarketScreenerExport { parameter } => {
-            let parameter = parameter_from_dto(parameter);
+            let mut parameter = parameter_from_dto(parameter);
+            // 上游 SDK 已把 market 变体并入单一 `screener` 入口;市场版固定只要 No.+Ticker 两列
+            parameter.columns = Some("0,1".to_string());
             let result = state
                 .finviz
-                .market_screener(parameter)
+                .screener(parameter)
                 .await
                 .map_err(rpc_error("market screener"))?;
             Ok(RpcResponsePayload::MarketScreenerExport(

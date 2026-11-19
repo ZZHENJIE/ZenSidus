@@ -1,6 +1,6 @@
 //! Market news panel: the market-wide news feed. History comes from one RPC
 //! page (the push channel only carries new articles); from then on the
-//! relay's news broadcast inserts live articles as they arrive, merged into
+//! server's news broadcast inserts live articles as they arrive, merged into
 //! the RPC rows by id. The pump runs for the panel's whole lifetime — news
 //! is low-frequency, so consuming it costs nothing and the table stays
 //! current without a catch-up fetch on re-activation. The server pushes
@@ -26,14 +26,14 @@ use crate::widgets::datatable::{self, Loadable as _, MarketNewsDelegate};
 pub struct MarketNewsPanel {
     focus_handle: FocusHandle,
     table: Entity<TableState<MarketNewsDelegate>>,
-    /// Live message pump over the relay's news broadcast. It runs for the
+    /// Live message pump over the server's news broadcast. It runs for the
     /// panel's whole lifetime; `None` until the hub reports `Connected`
-    /// (or while the relay is down after a permanent failure).
+    /// (or while the server is down after a permanent failure).
     pump: Option<Task<()>>,
 }
 
 impl MarketNewsPanel {
-    /// Load one page of recent market news over the relay and merge it into
+    /// Load one page of recent market news over the server and merge it into
     /// the table. `load_rows` is deliberately not used here: it replaces
     /// rows wholesale, which would drop articles that arrived on the push
     /// channel while the request was in flight — the merge keeps them, with
@@ -42,7 +42,7 @@ impl MarketNewsPanel {
         let Some(table) = table.upgrade() else {
             return;
         };
-        let Ok(relay) = AppState::relay(cx) else {
+        let Ok(server) = AppState::server(cx) else {
             return;
         };
         let generation = table.update(cx, |state, cx| {
@@ -55,7 +55,7 @@ impl MarketNewsPanel {
 
         cx.spawn(async move |cx| {
             let result = async {
-                match relay
+                match server
                     .rpc_checked(RpcRequestPayload::News {
                         symbols: vec![],
                         limit: 50,
@@ -89,17 +89,17 @@ impl MarketNewsPanel {
     }
 
     /// Attach the broadcast-receiver pump (once): one receiver of the
-    /// relay's news broadcast, inserting every article into the table.
-    /// Silent no-op while the relay is down; the hub-status observer calls
+    /// server's news broadcast, inserting every article into the table.
+    /// Silent no-op while the server is down; the hub-status observer calls
     /// again on `Connected`.
     fn try_attach(&mut self, cx: &mut Context<Self>) {
         if self.pump.is_some() {
             return;
         }
-        let Ok(relay) = AppState::relay(cx) else {
+        let Ok(server) = AppState::server(cx) else {
             return;
         };
-        let mut rx = relay.news_messages();
+        let mut rx = server.news_messages();
         let weak = self.table.downgrade();
         self.pump = Some(cx.spawn(async move |_this, cx| {
             loop {
@@ -150,11 +150,11 @@ impl Panel for MarketNewsPanel {
         };
         // Follow settings changes (e.g. a language switch) to retranslate
         // the column headers, and attach once the hub reports `Connected`.
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
         cx.observe(&hub, |this, _, cx| this.try_attach(cx)).detach();
         cx.observe_global_in::<AppState>(window, |_, _, cx| cx.notify())
             .detach();
-        // Attach right away when the relay is already up (panel re-created
+        // Attach right away when the server is already up (panel re-created
         // after a hub connect, for instance).
         this.try_attach(cx);
         this
@@ -173,7 +173,7 @@ impl gpui_kit::base::dock::Panel for MarketNewsPanel {
     fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
         // Nothing to do on hide: the pump keeps consuming while the tab is
         // hidden, so the table never goes stale. On re-activation, attach
-        // if the pump is still missing (relay came up meanwhile).
+        // if the pump is still missing (server came up meanwhile).
         if active {
             self.try_attach(cx);
         }

@@ -1,6 +1,0 @@
-- [首页](/)
-- [GUI 架构速览](architecture.md)
-- 教程
-  - [添加新面板（Panel）](guides/add-panel.md)
-  - [添加新窗口（含多实例）](guides/add-window.md)
-- [约定与陷阱](guides/conventions.md)

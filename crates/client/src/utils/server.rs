@@ -1,13 +1,13 @@
-//! relay 客户端:应用唯一的对外连接(替代 executor 三客户端 + 两条 WS)。
+//! server 客户端:应用唯一的对外连接(替代 executor 三客户端 + 两条 WS)。
 //!
-//! 一条到 relay-server 的 TCP 长连接(`[u32 LE 长度][postcard Frame]`),自带
+//! 一条到 server 的 TCP 长连接(`[u32 LE 长度][postcard Frame]`),自带
 //! 自动重连(指数退避 1s→60s)+ 心跳(10s Ping)+ RPC id 路由;推送帧解出后
 //! 映射回 anysdk 的 [`StockMessage`](anysdk::alpaca_stream::StockMessage) /
 //! 新闻帧广播——`stream_dispatch` 级联因此零改动。
 //!
 //! 本模块是纯 tokio,不依赖 GPUI:连接状态机由后台 actor 任务驱动,UI 侧只
-//! 拿广播接收端与命令发送端。订阅重放不在本模块——期望状态归 [`crate::utils::state::RelayHub`]
-//! 所有,它在每次 `Connected` 事件时重发并集(与旧 RelayHub 同语义)。
+//! 拿广播接收端与命令发送端。订阅重放不在本模块——期望状态归 [`crate::utils::state::Hub`]
+//! 所有,它在每次 `Connected` 事件时重发并集(与旧 Hub 同语义)。
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -42,7 +42,7 @@ const BACKOFF_MAX: Duration = Duration::from_secs(60);
 
 /// 连接状态(镜像给 hub 的状态灯;`Failed` 为永久失败——token 被拒)。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RelayStatus {
+pub enum ServerStatus {
     Disconnected,
     /// 首连或重连退避中。
     Connecting,
@@ -76,7 +76,7 @@ impl ClockEstimate {
 
 /// 连接配置(从 settings 现读,重连间生效)。
 #[derive(Debug, Clone)]
-pub struct RelayConfig {
+pub struct ServerConfig {
     /// `host:port`。
     pub addr: String,
     pub token: String,
@@ -112,20 +112,20 @@ struct Inner {
     stock_tx: broadcast::Sender<StockMessage>,
     news_tx: broadcast::Sender<NewsData>,
     progress_tx: broadcast::Sender<(u32, u64)>,
-    status_tx: broadcast::Sender<RelayStatus>,
+    status_tx: broadcast::Sender<ServerStatus>,
     clock: Arc<ClockEstimate>,
     next_rpc_id: AtomicU32,
 }
 
-/// 应用级 relay 客户端句柄:Clone 廉价,关闭靠 [`RelayClient::close`]。
+/// 应用级 server 客户端句柄:Clone 廉价,关闭靠 [`ServerClient::close`]。
 #[derive(Clone)]
-pub struct RelayClient {
+pub struct ServerClient {
     inner: Arc<Inner>,
 }
 
-impl RelayClient {
+impl ServerClient {
     /// 构建并启动后台 actor(不阻塞;连接在后台建立,状态经 `status()` 广播)。
-    pub fn start(runtime: tokio::runtime::Handle, config: RelayConfig) -> anyhow::Result<Self> {
+    pub fn start(runtime: tokio::runtime::Handle, config: ServerConfig) -> anyhow::Result<Self> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (commands, command_rx) = mpsc::unbounded_channel();
         let (stock_tx, _) = broadcast::channel(STOCK_CAPACITY);
@@ -175,12 +175,12 @@ impl RelayClient {
                 payload,
                 reply,
             })
-            .map_err(|_| "relay client shut down".to_string())?;
+            .map_err(|_| "server client shut down".to_string())?;
         rx.await
-            .map_err(|_| "relay client shut down".to_string())?
+            .map_err(|_| "server client shut down".to_string())?
     }
 
-    /// [`RelayClient::rpc`] 的 anyhow 版:面板调用点用 `?` 时无需手动转换
+    /// [`ServerClient::rpc`] 的 anyhow 版:面板调用点用 `?` 时无需手动转换
     /// 错误字符串。
     pub async fn rpc_checked(
         &self,
@@ -206,7 +206,7 @@ impl RelayClient {
         self.inner.progress_tx.subscribe()
     }
 
-    pub fn status(&self) -> broadcast::Receiver<RelayStatus> {
+    pub fn status(&self) -> broadcast::Receiver<ServerStatus> {
         self.inner.status_tx.subscribe()
     }
 
@@ -229,20 +229,20 @@ impl RelayClient {
 
 /// 后台 actor:连接状态机。见模块注释。
 async fn run_actor(
-    config: RelayConfig,
+    config: ServerConfig,
     inner: Arc<Inner>,
     mut commands: mpsc::UnboundedReceiver<Command>,
 ) {
     let mut backoff = BACKOFF_START;
     let mut close_requested = false;
-    set_status(&inner, RelayStatus::Connecting);
+    set_status(&inner, ServerStatus::Connecting);
 
     loop {
         let connect_result = connect_stream(&config).await;
         let stream = match connect_result {
             Ok(stream) => stream,
             Err(err) => {
-                tracing::warn!(error = format!("{err:#}"), "relay connect failed");
+                tracing::warn!(error = format!("{err:#}"), "server connect failed");
                 if sleep_backoff(&mut backoff, &mut commands, &mut close_requested).await {
                     break;
                 }
@@ -254,19 +254,19 @@ async fn run_actor(
             SessionEnd::Closed => break,
             SessionEnd::Rejected(reason) => {
                 // 服务端拒绝(token 不符等):重试无意义。
-                set_status(&inner, RelayStatus::Failed(reason));
+                set_status(&inner, ServerStatus::Failed(reason));
                 break;
             }
             SessionEnd::Dropped(reason) => {
-                tracing::warn!(reason, "relay session dropped; reconnecting");
-                set_status(&inner, RelayStatus::Connecting);
+                tracing::warn!(reason, "server session dropped; reconnecting");
+                set_status(&inner, ServerStatus::Connecting);
                 if sleep_backoff(&mut backoff, &mut commands, &mut close_requested).await {
                     break;
                 }
             }
         }
     }
-    set_status(&inner, RelayStatus::Disconnected);
+    set_status(&inner, ServerStatus::Disconnected);
 }
 
 /// 退避等待;期间继续消费命令(RPC 立即报离线,Reconnect 跳过剩余等待)。
@@ -290,7 +290,7 @@ async fn sleep_backoff(
                     return true;
                 }
                 Some(Command::Rpc { reply, .. }) => {
-                    let _ = reply.send(Err("relay offline".into()));
+                    let _ = reply.send(Err("server offline".into()));
                 }
                 // 离线期间的订阅丢弃:hub 在 Connected 时重发并集。
                 Some(Command::Subscribe { .. }) | Some(Command::Unsubscribe { .. }) => {}
@@ -313,7 +313,7 @@ enum SessionEnd {
 /// 返回前把在途 RPC 全部报"connection lost"。
 async fn run_session(
     mut stream: Box<dyn AsyncReadWrite>,
-    config: &RelayConfig,
+    config: &ServerConfig,
     inner: Arc<Inner>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
 ) -> SessionEnd {
@@ -370,9 +370,9 @@ async fn run_session(
     let offset_ms = server_time_offset(welcome, welcome_at);
     let rtt_guess = welcome_at.elapsed().as_millis() as i64 / 2;
     inner.clock.set(offset_ms, rtt_guess);
-    tracing::info!(offset_ms, rtt_guess, "relay clock estimate from welcome");
+    tracing::info!(offset_ms, rtt_guess, "server clock estimate from welcome");
 
-    set_status(&inner, RelayStatus::Connected);
+    set_status(&inner, ServerStatus::Connected);
     let mut ping = tokio::time::interval(PING_INTERVAL);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_activity = std::time::Instant::now();
@@ -564,7 +564,7 @@ type BoxStream = Box<dyn AsyncReadWrite>;
 trait AsyncReadWrite: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> AsyncReadWrite for T {}
 
-async fn connect_stream(config: &RelayConfig) -> anyhow::Result<BoxStream> {
+async fn connect_stream(config: &ServerConfig) -> anyhow::Result<BoxStream> {
     let tcp = tokio::net::TcpStream::connect(&config.addr).await?;
     tcp.set_nodelay(true)?;
     if !config.tls {
@@ -675,6 +675,6 @@ impl rustls::client::danger::ServerCertVerifier for PinnedCertVerifier {
     }
 }
 
-fn set_status(inner: &Inner, status: RelayStatus) {
+fn set_status(inner: &Inner, status: ServerStatus) {
     let _ = inner.status_tx.send(status);
 }

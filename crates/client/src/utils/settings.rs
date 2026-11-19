@@ -3,20 +3,19 @@
 //! Every struct here carries `#[serde(default)]`: a settings file written by
 //! an older build that lacks a field still loads, with that field at its
 //! default. Without it one missing field fails the whole parse and silently
-//! resets every setting (theme, language, credentials) to defaults.
+//! resets every setting (theme, language, watchlists) to defaults.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::keyring_store;
-use crate::utils::relay::RelayConfig;
+use crate::utils::server::ServerConfig;
 use gpui_kit::{App, SharedString};
 
 /// How long `update_settings` waits before writing the file, so a burst of
 /// mutations (typing in a text field, dragging a color picker, a dock
-/// relayout) lands as one disk write instead of one per event.
+/// re-layout) lands as one disk write instead of one per event.
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 
 /// Mutate the persisted settings through the `AppState` global. `global_mut`
@@ -47,27 +46,6 @@ pub fn update_settings(cx: &mut App, apply: impl FnOnce(&mut Settings)) {
 /// Write the settings file now if a debounced save is pending. Runs on the
 /// UI thread; call it on the quit paths so deferred saves are not lost.
 pub fn flush_settings(cx: &mut App) {
-    // The secrets are mirrored into the credential store *before* the file
-    // is written: if the file write fails afterwards, the stale file still
-    // carries its (old) plaintext values and the store wins on the next
-    // load — no order of failures can lose a secret.
-    let sync_result = {
-        let state = cx.global_mut::<crate::utils::AppState>();
-        let current = keyring_store::Secrets::from_settings(&state.settings);
-        let mut result = Ok(());
-        if current != state.synced_secrets {
-            result = keyring_store::sync(&current, &mut state.synced_secrets);
-        }
-        result
-    };
-    if let Err(err) = sync_result {
-        tracing::error!(
-            "{}",
-            crate::tr!("app.log.keyring_store_failed", err = format!("{err:#}"))
-        );
-        crate::utils::message::error(crate::tr!("app.notify.keyring_failed"), err, cx);
-    }
-
     let save_result = {
         let state = cx.global_mut::<crate::utils::AppState>();
         // Detach instead of dropping: dropping a `Task` cancels it, and this
@@ -111,10 +89,10 @@ pub struct Settings {
     /// rust-i18n locale; one of [`LANGUAGES`].
     pub language: String,
     pub theme: super::Theme,
-    pub relay: Relay,
+    pub server: Server,
     /// Saved screener presets. The section key stays `finviz` so older
     /// settings files keep loading; the export credential itself moved to
-    /// the relay server.
+    /// the server.
     pub finviz: Finviz,
     /// Market Screener panel presets, keyed by title.
     pub market_screener: MarketScreener,
@@ -132,7 +110,7 @@ impl Default for Settings {
         Self {
             language: LANGUAGES[0].0.into(),
             theme: super::Theme::default(),
-            relay: Relay::default(),
+            server: Server::default(),
             finviz: Finviz::default(),
             market_screener: MarketScreener::default(),
             translate: Translate::default(),
@@ -199,15 +177,14 @@ impl Translate {
     }
 }
 
-/// relay-server 连接配置:应用唯一的对外数据出口。token 走 OS 凭据库
-/// (见 [`super::keyring_store`])。变更保存后按设置页的重连按钮生效。
+/// server 连接配置:应用唯一的对外数据出口。**token 不落盘**——它在每次
+/// 点击连接时的对话框里输入,只活在本会话的连接里;这里只持久化地址与
+/// TLS 选项。
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
-pub struct Relay {
+pub struct Server {
     /// 服务器地址(`host:port`;TLS 由服务器 Nginx 终结)。
     pub addr: String,
-    /// 预共享 token(内存态,落盘前被擦除,真值在 keyring)。
-    pub token: String,
     /// true = TLS 连接。
     pub tls: bool,
     /// 固定校验的证书 PEM 路径(CF Origin 证书不在公共信任链);空 = 标准
@@ -215,12 +192,13 @@ pub struct Relay {
     pub tls_cert: String,
 }
 
-impl Relay {
-    /// 完整可用的连接配置,或 `None`(地址或 token 为空)。
-    pub fn config(&self) -> Option<RelayConfig> {
+impl Server {
+    /// 完整可用的连接配置,或 `None`(地址为空)。`token` 来自连接对话框,
+    /// 不属于持久化状态。
+    pub fn config(&self, token: &str) -> Option<ServerConfig> {
         let addr = self.addr.trim();
-        let token = self.token.trim();
-        (!addr.is_empty() && !token.is_empty()).then(|| RelayConfig {
+        let token = token.trim();
+        (!addr.is_empty() && !token.is_empty()).then(|| ServerConfig {
             addr: addr.to_string(),
             token: token.to_string(),
             tls: self.tls,
@@ -331,13 +309,8 @@ impl Settings {
     /// `fs::rename` replaces the existing file on Windows; if even that
     /// fails (transient AV/indexer locks on the target), fall back to a
     /// direct write rather than losing the save.
-    ///
-    /// The file never contains API secrets: they live in the OS credential
-    /// store (see `keyring_store`), so this serializes a sanitized copy.
     fn save_to(&self, path: &Path) -> anyhow::Result<()> {
-        let mut sanitized = self.clone();
-        sanitized.relay.token.clear();
-        let contents = serde_json::to_string_pretty(&sanitized)?;
+        let contents = serde_json::to_string_pretty(self)?;
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, contents.as_str())?;
         match std::fs::rename(&tmp, path) {
@@ -382,19 +355,20 @@ mod tests {
         assert_eq!(loaded, shipped);
     }
 
-    /// A settings file from an older build (fields missing, or a nested
-    /// struct partially filled — including retired sections like the old
-    /// `alpaca` credentials) must still load instead of resetting
-    /// everything to defaults.
+    /// A settings file from an older build (fields missing, a nested struct
+    /// partially filled — including retired sections like the old `alpaca`
+    /// credentials, or fields this build no longer has, like the persisted
+    /// server `token`) must still load instead of resetting everything to
+    /// defaults.
     #[test]
     fn partial_settings_file_loads() {
         let settings: Settings = serde_json::from_str(
-            r#"{"language":"zh-cn","alpaca":{"api_key":"k"},"relay":{"addr":"127.0.0.1:9720"}}"#,
+            r#"{"language":"zh-cn","alpaca":{"api_key":"k"},"server":{"addr":"127.0.0.1:9720","token":"legacy"}}"#,
         )
         .expect("partial settings parse");
         assert_eq!(settings.language, "zh-cn");
-        assert_eq!(settings.relay.addr, "127.0.0.1:9720");
-        assert!(!settings.relay.tls, "tls defaults to off");
+        assert_eq!(settings.server.addr, "127.0.0.1:9720");
+        assert!(!settings.server.tls, "tls defaults to off");
         assert!(
             !settings.window_state.is_empty(),
             "main window record is seeded"
@@ -416,6 +390,7 @@ mod tests {
             "app.calendar.ipo.company",
             "app.small_clock.alert",
             "app.settings.small_clock",
+            "app.token.title",
             "app.tokio_runtime_error",
         ];
         for locale in ["en-us", "zh-cn"] {

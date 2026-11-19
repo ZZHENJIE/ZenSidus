@@ -110,8 +110,8 @@ impl EconomicCalendarPanel {
         datatable::load_rows(
             table,
             tr!("app.calendar.economic.failed"),
-            move |relay| async move {
-                match relay
+            move |server| async move {
+                match server
                     .rpc_checked(RpcRequestPayload::EconomicCalendar {
                         date: date.to_string(),
                     })

@@ -1,4 +1,4 @@
-//! IPO calendar rows, scraped from iposcoop.com by the relay server.
+//! IPO calendar rows, scraped from iposcoop.com by the server.
 
 use gpui_kit::{
     App, Context, IntoElement, Window,

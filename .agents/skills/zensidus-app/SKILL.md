@@ -1,6 +1,6 @@
 ---
 name: zensidus-app
-description: 'Architecture, conventions and hard-won pitfalls of the ZenSidus app crate (crates/client): window management (AppWindow/DockWindow, singleton vs multi-instance, WindowRegistry, persistence, gpui-kit Root wrapper, the main-window quit dialog), the dock panel system (hand-written Panel trait with DataEntity/refresh, no macro), widgets/dialog + widgets/datatable conventions, RelayHub shared relay subscriptions + RelayClient RPC/push, status bar/message center, settings persistence, i18n/theme. Use when touching any file under crates/client — adding windows or panels or dialogs, changing window open/close/persistence behavior, wiring relay data into panels, or debugging "window not found", dialogs crashing the app, layouts not restoring, or settings being reset.'
+description: 'Architecture, conventions and hard-won pitfalls of the ZenSidus app crate (crates/client): window management (AppWindow/DockWindow, singleton vs multi-instance, WindowRegistry, persistence, gpui-kit Root wrapper, the main-window quit dialog), the dock panel system (hand-written Panel trait with DataEntity/refresh, no macro), widgets/dialog + widgets/datatable conventions, Hub shared server subscriptions + ServerClient RPC/push, status bar/message center, settings persistence, i18n/theme. Use when touching any file under crates/client — adding windows or panels or dialogs, changing window open/close/persistence behavior, wiring server data into panels, or debugging "window not found", dialogs crashing the app, layouts not restoring, or settings being reset.'
 ---
 
 # ZenSidus App (crates/client)
@@ -19,8 +19,8 @@ crates/client/src/
 ├── lib.rs               # i18n! + bootstrap()(目录/日志/settings/locale)+ init_app()
 │                        # (gpui_kit::init/theme/MessageLog/http/AppState);main.rs 只是
 │                        # 它们的薄壳(examples/ 已删除,临时截图载体用完即删,见验证清单)
-├── main.rs              # bootstrap → init_app → panels::init → windows::init →
-│                        # RelayHub::auto_connect(顺序敏感)
+├── main.rs              # bootstrap → init_app → panels::init → windows::init
+│                        # (无启动自动连接:token 每会话经连接对话框输入)
 ├── panels.rs            # Panel trait(const NAME/ICON/TITLE_KEY + new(info) + refresh
 │                        # 静态钩子 + default_title)+ PanelSpec 总表 all()(驱动注册与
 │                        # 菜单)+ open_in_center(按名走 PanelRegistry)+ fresh::<P>
@@ -30,7 +30,8 @@ crates/client/src/
 │                        # 脚手架;数据在 DataEntity delegate。MarketNews = HTTP 回填
 │                        # + 面板自持 NewsStream(subscribe "*",泵随面板常驻)
 ├── widgets/dialog/      # 跨窗口共用的对话框:open_*(window, cx, …) 入口(confirm 通用
-│                        # 确认 + dialog_footer / translate / search_symbol / screener_preset)
+│                        # 确认 + dialog_footer / translate / search_symbol / screener_preset /
+│                        # token 连接令牌,状态条 Popover 与设置页共用)
 ├── widgets/picker.rs    # StringPicker:watchlist 分组 / screener preset 共用的单选 Combobox 壳
 ├── widgets/datatable/   # TableDelegate 实现,按族分目录(calendar/{economic,earnings,ipo}、
 │                        # news/{stock,market}、screener/stock、watchlist)= 面板的
@@ -43,7 +44,7 @@ crates/client/src/
 ├── windows/app_window.rs# AppWindow trait:open_instance 里窗口根包 gpui-kit Root;
 │                        # render_titlebar_left/right 钩子(右侧可放窗口级按钮)
 ├── windows/dock_window.rs # DockWindow trait:dock 创建/恢复/LayoutChanged 即时落盘
-├── windows/main.rs      # 主窗口本体 + main/status_bar.rs(左:最新消息+历史 Popover;右:Alpaca 点)
+├── windows/main.rs      # 主窗口本体 + main/status_bar.rs(左:最新消息+历史 Popover;右:连接色点,点击弹连接 Popover)
 │                        # + main/close_event.rs(X → 退出对话框:取消 / 不保存 / 保存)
 ├── windows/settings.rs  # 设置窗口(text_setting 助手)+ settings/ 五页
 │                        # general/alpaca/finviz/logs/small_clock
@@ -55,27 +56,28 @@ crates/client/src/
 │                        # cache(见"open/close 生命周期")
 │                        # + etf_linkcalc/params_dialog.rs(窗口私有的参数对话框,不放 widgets/dialog)
 └── utils.rs             # app_dir + tr! 宏;utils/ 子模块:
-                         # relay(RelayClient:唯一对外 TCP 连接 + RPC)/
-                         # settings(LANGUAGES/update_settings/Relay 配置)/
-                         # theme / state(AppState + audio + relay_hub +
-                         # tokio_runtime)/ keyring_store(relay-token)/
+                         # server(ServerClient:唯一对外 TCP 连接 + RPC)/
+                         # settings(LANGUAGES/update_settings/Server 配置)/
+                         # theme / state(AppState + audio + hub +
+                         # tokio_runtime)/
                          # message(MessageLog)/ icons / assets(rust-embed)/
                          # logging / actions(OpenPanel{name} + Open* 窗口动作)
 ```
 
-数据层分工(2026-11 relay 化后):**客户端唯一的对外连接是 `utils/relay.rs` 的
-`RelayClient`**——一条到 relay-server 的 TCP(`protocol` 帧格式,postcard),
+数据层分工(2026-11 server 化后):**客户端唯一的对外连接是 `utils/server.rs` 的
+`ServerClient`**——一条到 server 的 TCP(`protocol` 帧格式,postcard),
 自带自动重连/心跳/RPC id 路由,推送帧映射回 anysdk 的 `StockMessage` 形状
-(`stream_dispatch` 级联不变)。hub 在 `utils/state/relay_hub.rs`(`RelayHub`:
+(`stream_dispatch` 级联不变)。hub 在 `utils/state/hub.rs`(`Hub`:
 `SymbolWish` 并集聚合 + 每次 `Connected` 重放订阅 + staleness 看门狗)。面板数据
-一律走 RPC:`relay.rpc_checked(RpcRequestPayload::…)`,远程表格经
-`datatable::load_rows`(闭包拿 `RelayClient`)。旧 `utils/executor.rs` 三客户端、
+一律走 RPC:`server.rpc_checked(RpcRequestPayload::…)`,远程表格经
+`datatable::load_rows`(闭包拿 `ServerClient`)。旧 `utils/executor.rs` 三客户端、
 独立 `NewsStream`、`gateway_sdk` 已全部退役;Alpaca/Finviz/DeepSeek 凭据在
-**server 侧** `server.toml`,客户端只持 relay token(keyring `relay-token`)。
+**server 侧** `server.toml`,客户端只持 server token(连接对话框输入,
+仅本会话内存态,不落盘;keyring 已于 2026-11 移除)。
 server 的上游对接细节见 `anysdk` 技能与 `crates/server/README.md`。
 
-数据文件(`~/.zensidus/`):`settings.json`(全部状态:主题/语言/relay 地址/
-translate/watchlists/window_state 含各窗口 cache;token 在 keyring)、`logs/`
+数据文件(`~/.zensidus/`):`settings.json`(全部状态:主题/语言/server 地址/
+translate/watchlists/window_state 含各窗口 cache;token 不落盘)、`logs/`
 (每日滚动,排查先看)。
 
 ## 窗口管理模型(改动前必读)
@@ -254,9 +256,9 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
 - **设置落盘唯一入口**:`settings::update_settings(cx, |s| …)`(utils/settings.rs)
   —— `global_mut::<AppState>` 自动通知所有 `observe_global::<AppState>` 窗口
   (全窗口刷新零接线)+ **防抖落盘**(500ms 合并写,2026-11-09 起;真正写盘
-  在 `flush_settings`,先同步密钥进 OS 凭据库再 temp+rename 原子写;
-  **settings.json 永无明文密钥**——relay token 在
-  keyring,`bootstrap::restore_into` 回填)。**新增退出路径必须调
+  在 `flush_settings`,temp+rename 原子写;**settings.json 永无密钥**——
+  server token 不落盘,连接对话框输入,keyring 已于 2026-11 移除)。
+  **新增退出路径必须调
   `flush_settings`**(close_event 两按钮、`persist_open_windows` 结尾已接)。
   失败进消息中心;窗口几何/布局的 `update_window_state` 也走它。
   **Settings 及所有嵌套结构都是结构级 `#[serde(default)]`**,缺字段的旧文件
@@ -265,35 +267,39 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
   (2026-11-09 起统一:**全 crate 只用 `tr!`,不要 `use rust_i18n::t`**——
   返回类型直接是文本槽位要的 `SharedString`,免 `.to_string()/.into()` 拼接)
   (gpui-kit 所有文字槽位的类型);需要 `String` 做拼接时才用 `t!(..).to_string()`
-- **凭据守卫**:RPC 消费方的在线守卫是 `AppState::relay(cx) -> Result<RelayClient>`
-  (relay 未连接即 Err;news 族面板用 `panels::news::relay_rpc` 包装成"未连接 +
-  去设置页"消息);`RelayStatus::{label(), reason(), color(cx)}` 是状态条与设置页
+- **凭据守卫**:RPC 消费方的在线守卫是 `AppState::server(cx) -> Result<ServerClient>`
+  (server 未连接即 Err;news 族面板用 `panels::news::server_rpc` 包装成"未连接 +
+  去设置页"消息);`ServerStatus::{label(), reason(), color(cx)}` 是状态条与设置页
   共用的展示映射
 - **MessageLog**(utils/message.rs,Global):`message::{error,warning,info,success}`
   推送即通知 `observe_global::<MessageLog>` 观察者(状态栏/主窗口零接线);
   状态栏左侧显示 `last()`,点击弹 `latest_first()` 历史 Popover。
-  **RelayHub 连接成败会自动推 success/error 消息**
-- **RelayHub**(utils/state/relay_hub.rs,Entity 挂在 AppState;2026-11 起替代
+  **Hub 连接成败会自动推 success/error 消息**
+- **Hub**(utils/state/hub.rs,Entity 挂在 AppState;2026-11 起替代
   旧 AlpacaHub 直连 Alpaca WS):
-  - 应用级唯一 relay 连接(RelayClient,utils/relay.rs);`set_symbols(EntityId,
+  - 应用级唯一 server 连接(ServerClient,utils/server.rs);`set_symbols(EntityId,
     SymbolWish)` 按订阅者记录意愿(symbols + 是否要 quotes),**只把并集的增减
-    发给 relay**(trades 意愿 → TRADES|DAILY,quotes 意愿 → QUOTES)——两个面板
+    发给 server**(trades 意愿 → TRADES|DAILY,quotes 意愿 → QUOTES)——两个面板
     同看 NVDA 只订一次
-  - **订阅重放在 hub**:RelayClient 自己自动重连(指数退避)但不保存订阅意愿,
+  - **订阅重放在 hub**:ServerClient 自己自动重连(指数退避)但不保存订阅意愿,
     hub 监听其 `status()` 广播,每次 `Connected`(首连与重连)重发两个并集;
     `Failed(reason)`(token 被拒等永久错误)→ Failed + teardown
   - 分发不经 hub:面板各自 `hub.stock_messages()` 拿 broadcast 接收端(已是
-    anysdk `StockMessage` 形状,由 RelayClient 从协议帧映射),`cx.spawn` 循环
-    recv 按自己的 symbols 过滤;RPC 走 `relay.rpc_checked(...)`
+    anysdk `StockMessage` 形状,由 ServerClient 从协议帧映射),`cx.spawn` 循环
+    recv 按自己的 symbols 过滤;RPC 走 `server.rpc_checked(...)`
   - **staleness 看门狗保留**:数据流在流而最新交易所时间戳落后本地钟 >15s →
-    `relay.force_reconnect()` 换新路由(订阅经 Connected 重放)
-  - `auto_connect(cx)`:启动时 relay 配置齐全(addr+token)就连一次;连接失败
-    由 RelayClient 后台重连,不阻塞 UI
+    `server.force_reconnect()` 换新路由(订阅经 Connected 重放)
+  - 连接入口 = 状态条色点 Popover / 设置页按钮 → **token 对话框**
+    (`widgets/dialog/token.rs`,`hub.connect(token)`)——token 不落盘、每会话
+    现输;ServerClient 启动后自动重连不阻塞 UI;无启动自动连接(2026-11 起)
   - tokio Runtime 全 app 只有一个(AppState 持有,Drop 时 shutdown_background;
     构建失败则 hub 报 Failed 不 panic),hub 只存 Handle
 - **状态栏**(windows/main/status_bar.rs):左 = 最新消息(级别色点 + 截断文本 +
-  muted 时间;点击 Popover 历史 + Clear;无消息完全空白);右 = relay 连接状态
-  **只剩色点**(文字在 tooltip——文字已在左侧消息区,重复显示是用户明确的雷)
+  muted 时间;点击 Popover 历史 + Clear;无消息完全空白);右 = server 连接状态
+  **只剩色点**(文字在 tooltip——文字已在左侧消息区,重复显示是用户明确的雷),
+  **点击弹连接 Popover**(状态行 + TCP 延迟 = 心跳 RTT,无样本显示 "—";服务器
+  地址 = settings.server.addr;连接/断开按钮与设置页同语义 `hub.connect/disconnect`;
+  latency 值随窗口重绘刷新,无独立定时器)
 
 ## 对话框(widgets/dialog)
 

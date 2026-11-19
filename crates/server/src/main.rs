@@ -1,4 +1,4 @@
-//! relay-server 入口:加载配置 → 连上游(anysdk 股票/新闻流,重试直到成功)
+//! server 入口:加载配置 → 连上游(anysdk 股票/新闻流,重试直到成功)
 //! → 起常驻任务 → TCP listener 循环。
 
 mod config;
@@ -25,7 +25,7 @@ use state::AppState;
 fn main() -> anyhow::Result<()> {
     let config_path = std::env::args()
         .nth(1)
-        .or_else(|| std::env::var("RELAY_CONFIG").ok())
+        .or_else(|| std::env::var("SERVER_CONFIG").ok())
         .unwrap_or_else(|| "server.toml".to_string());
     let config = Config::load(&config_path)?;
 
@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
 
 async fn serve(config: Config) -> anyhow::Result<()> {
     let http = reqwest::Client::builder()
-        .user_agent(concat!("relay-server/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("server/", env!("CARGO_PKG_VERSION")))
         .build()?;
 
     let alpaca = AlpacaClient::new(
@@ -87,7 +87,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     state::spawn(Arc::clone(&app), stock, news, upstream_rx);
 
     let listener = tokio::net::TcpListener::bind(&app.config.listen).await?;
-    tracing::info!(listen = %app.config.listen, "relay-server listening");
+    tracing::info!(listen = %app.config.listen, "server listening");
 
     loop {
         tokio::select! {

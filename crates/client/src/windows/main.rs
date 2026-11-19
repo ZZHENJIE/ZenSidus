@@ -8,7 +8,7 @@ pub mod status_bar;
 use crate::{
     panels,
     utils::message::MessageLog,
-    utils::state::{RelayHubEvent, AppState},
+    utils::state::{HubEvent, AppState},
     widgets::menu::{self, OnActionsExt},
     windows::{AppWindow, DockWindow, WindowType, dump_dock},
 };
@@ -45,8 +45,8 @@ impl AppWindow for MainWindow {
         // connection status changes arrive from the hub's background thread.
         cx.observe_global::<MessageLog>(|_, cx| cx.notify())
             .detach();
-        let hub = cx.global::<AppState>().relay_hub.clone();
-        cx.subscribe(&hub, |_, _, _: &RelayHubEvent, cx| {
+        let hub = cx.global::<AppState>().hub.clone();
+        cx.subscribe(&hub, |_, _, _: &HubEvent, cx| {
             cx.notify();
         })
         .detach();

@@ -76,7 +76,7 @@ app:
   stock_news:
     empty: Search a symbol to see its news
     failed: Failed to fetch news
-    no_credentials: Connect to the relay first — see the Relay settings page
+    no_credentials: Connect to the server first — see the Server settings page
     headline: Headline
     source: Source
     updated_at: Updated
@@ -90,7 +90,7 @@ app:
     updated_at: Updated
     empty: Waiting for the news feed — new articles appear here automatically
     failed: Failed to fetch market news
-    no_credentials: Connect to the relay first — see the Relay settings page
+    no_credentials: Connect to the server first — see the Server settings page
 
   # ── 面板文案:Stock Screener ──────────────────────────────────────
   stock_screener:
@@ -99,7 +99,7 @@ app:
     edit_preset: Edit preset
     delete_preset: Delete preset
     delete_confirm: "Delete preset \"%{name}\"? This cannot be undone."
-    no_relay: Connect to the relay first — see the Relay settings page
+    no_server: Connect to the server first — see the Server settings page
     empty: Pick a preset from the toolbar to load data
     failed: The screener request failed. See the message center for details
     no_data: The preset returned no data
@@ -130,7 +130,7 @@ app:
     exchanges_hint: Multi-select; one table per exchange — an ask or bid resting there with enough size fills that table
     min_size: Minimum size
     min_size_hint: An ask or bid size must reach this value; 0 disables the check
-    no_relay: Connect to the relay first — see the Relay settings page
+    no_server: Connect to the server first — see the Server settings page
 
   # ── 面板文案:Trades(time & sales)────────────────────────────────────
   trades:
@@ -140,7 +140,7 @@ app:
     exchange: Exchange
     search_title: Search and switch the tape symbol
     no_symbol: Pick a symbol from the toolbar search
-    not_connected: The relay is not connected
+    not_connected: The server is not connected
     waiting: Waiting for prints… (live during trading hours)
 
   # ── 面板文案:Quote(top of book)──────────────────────────────────────
@@ -255,18 +255,16 @@ app:
     level_low: Low (1)
     level_medium: Medium (2)
     level_high: High (3)
-    # Relay 页
-    relay: Relay
-    relay_desc: "The relay server is the app's only outbound data connection: quotes, news and every lookup go through it."
+    # Server page
+    server: Server
+    server_desc: "The server is the app's only outbound data connection: quotes, news and every lookup go through it."
     connection: Connection
-    relay_addr: Server address
-    relay_addr_desc: "Relay server address as host:port, e.g. relay.example.com:9720."
-    relay_token: Token
-    relay_token_desc: The preshared access token configured on the relay server.
-    relay_tls: TLS
-    relay_tls_desc: "TLS is terminated by nginx on the server; keep this on when connecting through it."
-    relay_tls_cert: TLS certificate path
-    relay_tls_cert_desc: "Path to the server certificate (PEM) to pin, e.g. a Cloudflare origin certificate that public trust stores do not know. Empty = verify against public roots."
+    server_addr: Server address
+    server_addr_desc: "Server address as host:port, e.g. server.example.com:9720."
+    server_tls: TLS
+    server_tls_desc: "TLS is terminated by nginx on the server; keep this on when connecting through it."
+    server_tls_cert: TLS certificate path
+    server_tls_cert_desc: "Path to the server certificate (PEM) to pin, e.g. a Cloudflare origin certificate that public trust stores do not know. Empty = verify against public roots."
     connect: Connect
     disconnect: Disconnect
     status:
@@ -275,6 +273,7 @@ app:
       disconnected: Disconnected
       failed: Connection failed. Check the server address and token.
       reconnecting: Connection lost, reconnecting…
+      latency: TCP latency
       subscribe_failed: "Subscribe failed after retries: %{symbols} — those symbols may have no data"
     # 市场筛选器页
     market_screener: Market Screener
@@ -329,10 +328,13 @@ app:
     title: Messages
     empty: No messages yet
     clear: Clear messages
+  # ── 连接 Token 对话框(每次连接时输入,不落盘)─────────────────────────
+  token:
+    title: Server Token
+    placeholder: Preshared access token (this session only, never stored)
   notify:
     search_failed: Search failed. Check your network.
     save_failed: Failed to save settings
-    keyring_failed: Failed to store credentials in the system credential manager
     open_log_failed: Failed to open the log file
     window_open_failed: "Failed to open the %{window} window"
   # ── 日志(tracing 诊断文本,跟随 UI 语言;%{err} 为上游错误值,保持原文)──
@@ -342,7 +344,6 @@ app:
     geometry_not_persisted: "Geometry of %{window} not persisted: %{err}"
     panel_not_registered: "No panel registered as %{name}"
     missed_stream_messages: "Watchlist missed %{count} stream messages"
-    keyring_store_failed: "Failed to store credentials: %{err}"
     settings_save_failed: "Failed to save settings: %{err}"
     default_config_write_failed: "Failed to write default config to %{path}: %{err}"
     settings_rename_fallback: "Atomic settings rename failed (%{err}); wrote directly"
@@ -351,11 +352,10 @@ app:
     stream_stale: "Quote stream fell %{age}ms behind — reconnecting for a fresh route"
     stream_reconnecting: "Stock stream reconnecting (attempt %{attempt})"
     wire_queue_gone: "Wire queue is gone; dropping subscribe/unsubscribe"
-    keyring_read_failed: "Failed to read %{entry} from the credential store: %{err}"
     audio_decode_failed: "Failed to decode %{audio}: %{err}"
     window_open_failed: "Failed to open %{window} window: %{err}"
     invalid_timestamp: "Invalid timestamp: %{timestamp}"
     network_time_failed: "Failed to fetch network time, using the local clock: %{err}"
     calendar_parse_failed: "Failed to parse the economic calendar: %{err}"
     calendar_fetch_failed: "Failed to fetch the economic calendar: %{err}"
-    relay_not_connected: "Relay is not connected"
+    server_not_connected: "Server is not connected"

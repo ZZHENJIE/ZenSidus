@@ -1,12 +1,14 @@
 //! Bottom bar of the main window: the latest message on the left (click for
-//! the full history), the Alpaca connection dot on the right.
+//! the full history), the server connection dot on the right (click for the
+//! connection popover: status, TCP latency, server address, connect /
+//! disconnect).
 
 use gpui_kit::{
     Anchor, App, Context, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
-    ReadGlobal as _, ScrollHandle, StatefulInteractiveElement as _, Styled as _,
+    ReadGlobal as _, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _,
     base::{h_flex, v_flex},
     component::{
-        ActiveTheme as _, Sizable as _,
+        ActiveTheme as _, Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         popover::Popover,
         scroll::Scrollbar,
@@ -17,12 +19,13 @@ use gpui_kit::{
 
 use crate::tr;
 use crate::utils::message::{Level, MessageLog};
-use crate::utils::state::AppState;
+use crate::utils::state::{AppState, ServerStatus};
+use crate::widgets::dialog::open_token_dialog;
 use crate::windows::MainWindow;
 
 impl MainWindow {
     /// Bottom bar of the main window: latest message on the left (click for
-    /// the full history), live Alpaca connection status on the right. The
+    /// the full history), live server connection status on the right. The
     /// container (background, top border, text scale, region alignment) is
     /// the shared [`StatusBar`] component.
     pub(super) fn render_status_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -36,8 +39,8 @@ impl MainWindow {
                     .child(render_message_area(&self.message_scroll, cx)),
             );
         }
-        // Right: Alpaca connection status, pinned to the edge.
-        bar.right(render_alpaca_status(cx))
+        // Right: server connection status, pinned to the edge.
+        bar.right(render_connection_status(cx))
     }
 }
 
@@ -144,22 +147,132 @@ fn render_message_area(scroll: &ScrollHandle, cx: &mut App) -> impl IntoElement 
         })
 }
 
-/// Severity dot for the current hub connection. The dot alone: failed /
+/// Severity dot for the current server connection. The dot alone: failed /
 /// connected already land in the message area on the left, so repeating the
-/// text here would be duplication — the full status lives on the tooltip,
-/// with the upstream reason appended when the connection failed.
-fn render_alpaca_status(cx: &mut App) -> impl IntoElement {
-    let status = cx.global::<AppState>().relay_hub.read(cx).status().clone();
+/// text here would be duplication — the tooltip carries the status label,
+/// with the upstream reason appended when the connection failed. Clicking
+/// opens the connection popover: live status, TCP latency (the heartbeat
+/// round-trip), the configured server address and the connect / disconnect
+/// actions (same semantics as the Server settings page).
+fn render_connection_status(cx: &mut App) -> impl IntoElement {
+    let status = cx.global::<AppState>().hub.read(cx).status().clone();
     let mut tooltip = status.label();
     if let Some(reason) = status.reason().filter(|reason| !reason.is_empty()) {
         tooltip = format!("{tooltip} — {reason}").into();
     }
-    Button::new("alpaca-status")
+    let trigger = Button::new("connection-status")
         .ghost()
         .xsmall()
-        .label("Alpaca")
         .child(div().size(px(6.)).rounded_full().bg(status.color(cx)))
-        .tooltip(tooltip)
+        .tooltip(tooltip);
+
+    Popover::new("connection-popover")
+        .trigger(trigger)
+        .anchor(Anchor::BottomRight)
+        .content(move |_state, _window, cx| {
+            let hub = cx.global::<AppState>().hub.clone();
+            let status = hub.read(cx).status().clone();
+            let rtt = hub
+                .read(cx)
+                .clock()
+                .and_then(|clock| clock.get())
+                .map(|(_, rtt)| rtt);
+            let up = hub.read(cx).connected();
+            let connecting = matches!(status, ServerStatus::Connecting);
+            let reason = status.reason().filter(|reason| !reason.is_empty());
+            let addr = cx.global::<AppState>().settings.server.addr.clone();
+
+            v_flex()
+                .min_w(px(280.))
+                .text_sm()
+                .gap_1()
+                // Status: dot + label (+ failure reason, muted).
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(div().size(px(8.)).rounded_full().bg(status.color(cx)))
+                        .child(div().child(status.label()))
+                        .children(reason.map(|reason| {
+                            div()
+                                .truncate()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(reason)
+                        })),
+                )
+                // TCP latency: the latest heartbeat round-trip; "—" before
+                // the first clock sample (also covers disconnected).
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(tr!("app.settings.status.latency")),
+                        )
+                        .child(match rtt {
+                            Some(rtt) => SharedString::from(format!("{rtt} ms")),
+                            None => SharedString::from("—"),
+                        }),
+                )
+                // Server address as configured in the settings.
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(tr!("app.settings.server_addr")),
+                        )
+                        .child(
+                            div()
+                                .max_w(px(180.))
+                                .truncate()
+                                .child(if addr.is_empty() {
+                                    SharedString::from("—")
+                                } else {
+                                    addr.into()
+                                }),
+                        ),
+                )
+                // Connect / disconnect, same semantics as the settings page.
+                .child(
+                    h_flex()
+                        .mt_1()
+                        .gap_2()
+                        .child(
+                            Button::new("connection-connect")
+                                .primary()
+                                .small()
+                                .label(tr!("app.settings.connect"))
+                                .disabled(connecting || up)
+                                .on_click({
+                                    let hub = hub.clone();
+                                    move |_, window, cx| {
+                                        // The token is typed per connect in the
+                                        // dialog (never persisted).
+                                        open_token_dialog(window, cx, {
+                                            let hub = hub.clone();
+                                            move |token, cx| {
+                                                hub.update(cx, |hub, cx| {
+                                                    hub.connect(token.to_string(), cx)
+                                                })
+                                            }
+                                        });
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new("connection-disconnect")
+                                .outline()
+                                .small()
+                                .label(tr!("app.settings.disconnect"))
+                                .disabled(!up && !connecting)
+                                .on_click(move |_, _, cx| {
+                                    hub.update(cx, |hub, cx| hub.disconnect(cx))
+                                }),
+                        ),
+                )
+        })
 }
 
 fn level_color(level: Level, cx: &App) -> Hsla {

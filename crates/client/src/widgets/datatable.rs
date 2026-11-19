@@ -68,14 +68,14 @@ pub trait Loadable: TableDelegate {
 }
 
 /// Fetch rows into a table: flag it loading, run `request` with the app's
-/// relay client, then store the rows — or clear them and report `error_title`
+/// server client, then store the rows — or clear them and report `error_title`
 /// to the message center. A table that is already gone is ignored, and a
 /// response whose fetch has been superseded (a newer `load_rows` or a
 /// delegate reset started meanwhile) is discarded without touching the rows.
 pub fn load_rows<D, Fut>(
     table: WeakEntity<TableState<D>>,
     error_title: SharedString,
-    request: impl FnOnce(crate::utils::relay::RelayClient) -> Fut + 'static,
+    request: impl FnOnce(crate::utils::server::ServerClient) -> Fut + 'static,
     cx: &mut App,
 ) where
     D: Loadable + 'static,
@@ -84,8 +84,8 @@ pub fn load_rows<D, Fut>(
     let Some(table) = table.upgrade() else {
         return;
     };
-    let Ok(relay) = crate::utils::state::AppState::relay(cx) else {
-        message::error(error_title, anyhow::anyhow!("relay is not connected"), cx);
+    let Ok(server) = crate::utils::state::AppState::server(cx) else {
+        message::error(error_title, anyhow::anyhow!("server is not connected"), cx);
         return;
     };
     let generation = table.update(cx, |state, cx| {
@@ -97,7 +97,7 @@ pub fn load_rows<D, Fut>(
     });
 
     cx.spawn(async move |cx| {
-        let result = request(relay).await;
+        let result = request(server).await;
         table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
             if *delegate.fetch_generation_mut() != generation {

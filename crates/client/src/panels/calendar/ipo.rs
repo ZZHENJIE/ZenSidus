@@ -47,8 +47,8 @@ impl Panel for IPOCalendarPanel {
         datatable::load_rows(
             entity,
             tr!("app.calendar.ipo.failed"),
-            |relay| async move {
-                match relay.rpc_checked(RpcRequestPayload::IpoCalendar).await? {
+            |server| async move {
+                match server.rpc_checked(RpcRequestPayload::IpoCalendar).await? {
                     RpcResponsePayload::IpoCalendar(items) => Ok(items),
                     other => Err(anyhow::anyhow!("unexpected rpc response: {other:?}")),
                 }

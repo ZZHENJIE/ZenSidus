@@ -13,7 +13,7 @@ use tracing::error;
 
 use crate::{
     tr,
-    utils::relay::RelayClient,
+    utils::server::ServerClient,
     utils::state::{AppState, audio::AppAudio},
     windows::{AppWindow, WindowType, hook_should_close},
 };
@@ -27,7 +27,7 @@ use crate::{
 pub struct SmallClockWindow {
     text: String,
     loading: bool,
-    /// The calibrated wall-clock time of the last tick (relay server time
+    /// The calibrated wall-clock time of the last tick (server time
     /// once, then incremented per second).
     now: i64,
     /// The whole fetched week of economic events.
@@ -66,21 +66,21 @@ enum Event {
 }
 
 impl SmallClockWindow {
-    async fn tokio_task(tx: UnboundedSender<Event>, relay: Option<RelayClient>) {
+    async fn tokio_task(tx: UnboundedSender<Event>, server: Option<ServerClient>) {
         // Create the timer
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        // Network time from the relay's Welcome/heartbeat clock estimate
+        // Network time from the server's Welcome/heartbeat clock estimate
         // (server clock, ms → s); without a sample, fall back to the local
         // clock.
-        let mut timestamp: i64 = relay
+        let mut timestamp: i64 = server
             .as_ref()
-            .and_then(|relay| relay.clock().get())
+            .and_then(|server| server.clock().get())
             .map(|(offset_ms, rtt_ms)| {
                 (chrono::Utc::now().timestamp_millis() + offset_ms + rtt_ms / 2) / 1000
             })
             .unwrap_or_else(|| {
-                error!("{}", tr!("app.log.network_time_failed", err = "no relay clock sample".to_string()));
+                error!("{}", tr!("app.log.network_time_failed", err = "no server clock sample".to_string()));
                 chrono::Local::now().timestamp()
             });
         // Send the loaded event
@@ -100,9 +100,9 @@ impl SmallClockWindow {
     /// One calendar fetch for this window's lifetime: the current week's
     /// export covers every event the alert window can ever fire on (the
     /// server snaps the date to its Mon–Fri window).
-    async fn calendar_task(tx: UnboundedSender<Event>, relay: RelayClient) {
+    async fn calendar_task(tx: UnboundedSender<Event>, server: ServerClient) {
         let date = chrono::Utc::now().date_naive().to_string();
-        match relay
+        match server
             .rpc_checked(protocol::RpcRequestPayload::EconomicCalendar { date })
             .await
         {
@@ -212,18 +212,18 @@ impl AppWindow for SmallClockWindow {
         if let Some(runtime) = AppState::tokio_runtime(cx) {
             // Runtime is available
             let (tx, rx) = unbounded_channel::<Event>();
-            let relay = AppState::relay(cx).ok();
+            let server = AppState::server(cx).ok();
             // Request and timer Task
             this.loading = true;
             let tx_time = tx.clone();
             this.tokio_task = Some(runtime.spawn(async move {
-                Self::tokio_task(tx_time, relay).await;
+                Self::tokio_task(tx_time, server).await;
             }));
             // One calendar fetch alongside the timer (skipped silently while
-            // the relay is down — the badge area just stays empty).
-            if let Ok(relay) = AppState::relay(cx) {
+            // the server is down — the badge area just stays empty).
+            if let Ok(server) = AppState::server(cx) {
                 runtime.spawn(async move {
-                    Self::calendar_task(tx, relay).await;
+                    Self::calendar_task(tx, server).await;
                 });
             } else {
                 this.loading = false;

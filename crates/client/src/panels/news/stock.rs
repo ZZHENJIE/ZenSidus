@@ -37,15 +37,15 @@ impl StockNewsPanel {
         else {
             return;
         };
-        if super::relay_rpc(cx).is_none() {
+        if super::server_rpc(cx).is_none() {
             return;
         }
 
         datatable::load_rows(
             table,
             tr!("app.stock_news.failed"),
-            move |relay| async move {
-                match relay
+            move |server| async move {
+                match server
                     .rpc_checked(RpcRequestPayload::News {
                         symbols: vec![symbol],
                         limit: 50,

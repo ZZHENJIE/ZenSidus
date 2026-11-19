@@ -28,7 +28,7 @@ use tokio::sync::broadcast;
 use crate::{
     tr,
     utils::AppIcon,
-    utils::state::{RelayHubEvent, RelayStatus, AppState, SymbolWish},
+    utils::state::{HubEvent, ServerStatus, AppState, SymbolWish},
     widgets::icon_button,
     windows::{AppWindow, WindowType, hook_should_close},
 };
@@ -174,14 +174,14 @@ impl AppWindow for ETFLinkCalcWindow {
 
         let cache: Cache = serde_json::from_value(cache).unwrap_or_default();
 
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
 
         // Connection status drives the message pump: connected attaches a
         // fresh broadcast receiver, any other status cancels it and drops
         // the quotes (the last values are stale by then).
-        cx.subscribe(&hub, |this, hub, _: &RelayHubEvent, cx| {
+        cx.subscribe(&hub, |this, hub, _: &HubEvent, cx| {
             match hub.read(cx).status() {
-                RelayStatus::Connected => this.refresh_pump(cx),
+                ServerStatus::Connected => this.refresh_pump(cx),
                 _ => this.drop_quotes(cx),
             }
         })
@@ -325,7 +325,7 @@ impl ETFLinkCalcWindow {
             .map(|symbol| symbol.to_ascii_uppercase())
             .collect();
         let subscriber = self.subscriber;
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
         hub.update(cx, |hub, _| {
             hub.set_symbols(
                 subscriber,
@@ -341,7 +341,7 @@ impl ETFLinkCalcWindow {
     /// (Re)attach the broadcast-receiver pump: one receiver of the hub's
     /// stream, filtered for this window's two symbols.
     fn refresh_pump(&mut self, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
         let Some(rx) = hub.read(cx).stock_messages() else {
             return;
         };
@@ -471,11 +471,11 @@ impl ETFLinkCalcWindow {
         if symbols.is_empty() {
             return;
         }
-        let Ok(relay) = AppState::relay(cx) else {
+        let Ok(server) = AppState::server(cx) else {
             return;
         };
         cx.spawn(async move |this, cx| {
-            let Ok(response) = relay
+            let Ok(response) = server
                 .rpc_checked(RpcRequestPayload::Snapshot {
                     symbols: symbols.clone(),
                 })

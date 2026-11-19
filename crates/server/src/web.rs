@@ -2,7 +2,8 @@
 //! 标的搜索(futunn 代理)、翻译(DeepSeek 代理)、IPO 日历(iposcoop 抓取)。
 
 use anyhow::Context;
-use serde_json::Value;
+use simd_json::OwnedValue as Value;
+use simd_json::prelude::*;
 
 use protocol::{IpoItem, SearchItem};
 
@@ -11,7 +12,11 @@ const DEEPSEEK_URL: &str = "https://api.deepseek.com/chat/completions";
 const IPO_URL: &str = "https://www.iposcoop.com/ipo-calendar/";
 
 /// 标的搜索:futunn search-suggest 代理,只保留美股(`marketType == 2`)。
-pub async fn search(http: &reqwest::Client, keyword: &str, lang: &str) -> anyhow::Result<Vec<SearchItem>> {
+pub async fn search(
+    http: &reqwest::Client,
+    keyword: &str,
+    lang: &str,
+) -> anyhow::Result<Vec<SearchItem>> {
     let url = format!(
         "{FUTUNN_SEARCH_URL}?keyword={}&lang={}",
         urlencoding::encode(keyword),
@@ -23,12 +28,17 @@ pub async fn search(http: &reqwest::Client, keyword: &str, lang: &str) -> anyhow
         .await
         .context("futunn search request failed")?;
     let status = response.status();
-    let body = response.text().await.context("futunn search body read failed")?;
+    let body = response
+        .text()
+        .await
+        .context("futunn search body read failed")?;
     if !status.is_success() {
         anyhow::bail!("Search API error {status}: {}", body.trim());
     }
-    let data: Value =
-        serde_json::from_str(&body).with_context(|| format!("futunn search not JSON: {}", short(&body)))?;
+    // simd-json 原地解析会改写缓冲区,错误快照要在解析前截取
+    let snippet = short(&body);
+    let data: Value = simd_json::from_slice(&mut body.into_bytes())
+        .with_context(|| format!("futunn search not JSON: {snippet}"))?;
     Ok(parse_search(&data))
 }
 
@@ -36,11 +46,21 @@ pub async fn search(http: &reqwest::Client, keyword: &str, lang: &str) -> anyhow
 /// 股票码只含 `A-Z` 与 `.`)。
 fn parse_search(data: &Value) -> Vec<SearchItem> {
     let mut result = Vec::new();
-    if let Some(stock) = data.get("data").and_then(|data| data.get("stock")).and_then(|v| v.as_array()) {
+    if let Some(stock) = data
+        .get("data")
+        .and_then(|data| data.get("stock"))
+        .and_then(|v| v.as_array())
+    {
         for item in stock {
             let market_type = item.get("marketType").and_then(|v| v.as_i64());
-            let name = item.get("stockName").and_then(|v| v.as_str()).unwrap_or_default();
-            let symbol = item.get("stockSymbol").and_then(|v| v.as_str()).unwrap_or_default();
+            let name = item
+                .get("stockName")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let symbol = item
+                .get("stockSymbol")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             if market_type == Some(2) && is_valid_stock_symbol(symbol) {
                 result.push(SearchItem {
                     name: name.to_string(),
@@ -65,7 +85,7 @@ pub async fn translate(
     to: &str,
     keyword: &str,
 ) -> anyhow::Result<String> {
-    let body = serde_json::json!({
+    let body = simd_json::json!({
         "model": "deepseek-flash",
         "messages": [
             {
@@ -89,10 +109,11 @@ pub async fn translate(
     if !status.is_success() {
         anyhow::bail!("DeepSeek API error {status}: {}", body.trim());
     }
-    let data: Value = serde_json::from_str(&body).context("deepseek response not JSON")?;
+    let data: Value =
+        simd_json::from_slice(&mut body.into_bytes()).context("deepseek response not JSON")?;
     let content = data
         .get("choices")
-        .and_then(|choices| choices.get(0))
+        .and_then(|choices| choices.get_idx(0))
         .and_then(|choice| choice.get("message"))
         .and_then(|message| message.get("content"))
         .and_then(|content| content.as_str())
@@ -105,7 +126,11 @@ pub async fn translate(
 
 /// IPO 日历:抓取 iposcoop.com 的日历页并解析主表。
 pub async fn ipo(http: &reqwest::Client) -> anyhow::Result<Vec<IpoItem>> {
-    let response = http.get(IPO_URL).send().await.context("iposcoop request failed")?;
+    let response = http
+        .get(IPO_URL)
+        .send()
+        .await
+        .context("iposcoop request failed")?;
     let status = response.status();
     let html = response.text().await.context("iposcoop body read failed")?;
     if !status.is_success() {
@@ -118,8 +143,8 @@ pub async fn ipo(http: &reqwest::Client) -> anyhow::Result<Vec<IpoItem>> {
 /// 0/1/2/3/4/5/7 列,数值列解析失败按 0)。
 fn parse_ipo(html: &str) -> Vec<IpoItem> {
     let document = scraper::Html::parse_document(html);
-    let rows_selector = scraper::Selector::parse("#main-content table tbody tr")
-        .expect("static selector");
+    let rows_selector =
+        scraper::Selector::parse("#main-content table tbody tr").expect("static selector");
     let cell_selector = scraper::Selector::parse("td").expect("static selector");
     let link_selector = scraper::Selector::parse("a").expect("static selector");
 
@@ -166,7 +191,7 @@ mod tests {
     /// 只保留 marketType==2 且代码合法的建议(TS 版行为)。
     #[test]
     fn search_filters_us_equities() {
-        let data: Value = serde_json::json!({
+        let data: Value = simd_json::json!({
             "data": {
                 "stock": [
                     {"stockName": "Apple Inc.", "stockSymbol": "AAPL", "marketType": 2},

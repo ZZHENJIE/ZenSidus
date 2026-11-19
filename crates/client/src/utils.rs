@@ -7,11 +7,10 @@ pub mod assets;
 pub mod exchanges;
 
 pub mod icons;
-pub mod keyring_store;
 pub mod logging;
 pub mod message;
 pub mod settings;
-pub mod relay;
+pub mod server;
 pub mod state;
 pub mod theme;
 

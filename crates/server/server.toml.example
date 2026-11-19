@@ -1,4 +1,4 @@
-# relay-server 配置样例:复制为 server.toml 并填入真实凭据(server.toml 已 gitignore)。
+# server 配置样例:复制为 server.toml 并填入真实凭据(server.toml 已 gitignore)。
 
 # 下游监听地址。公网暴露由 Nginx stream 块终结 TLS 后转发到本地址(见 README)。
 listen = "127.0.0.1:9720"

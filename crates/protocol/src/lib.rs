@@ -1,4 +1,4 @@
-//! relay 线协议:ZenSidus client ↔ relay-server 的唯一通信契约。
+//! 线协议:ZenSidus client ↔ server 的唯一通信契约。
 //!
 //! 传输:一条 TCP 长连接,帧格式 `[u32 LE 长度][postcard 编码的 Frame]`。
 //! 设计见仓库根 `App.md` §2.2;D1(订阅携带 symbol 名)/ D2(RestProgress 进度)

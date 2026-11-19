@@ -1,6 +1,6 @@
 ---
 name: anysdk
-description: 使用 AnySDK（git 依赖，Alpaca 行情 + Finviz Elite SDK）时必读。涵盖泛型 Client 的构造（执行器由使用方实现，本项目在 relay-server 的 crates/server/src/executor.rs）、alpaca_sdk 的 HTTP 端点全表与命名约定、alpaca_stream 的 supervisor 自愈流模型（StreamStatus/订阅回放/fail-fast）、finviz_sdk 的 CSV 导出与 verbatim 字符串原则、以及本项目 server 侧上游对接与实测陷阱。当任务涉及 anysdk、Alpaca 数据接入、Finviz 数据接入、行情流或日历数据时使用。
+description: 使用 AnySDK（git 依赖，Alpaca 行情 + Finviz Elite SDK）时必读。涵盖泛型 Client 的构造（执行器由使用方实现，本项目在 server 的 crates/server/src/executor.rs）、alpaca_sdk 的 HTTP 端点全表与命名约定、alpaca_stream 的 supervisor 自愈流模型（StreamStatus/订阅回放/fail-fast）、finviz_sdk 的 CSV 导出与 verbatim 字符串原则、以及本项目 server 侧上游对接与实测陷阱。当任务涉及 anysdk、Alpaca 数据接入、Finviz 数据接入、行情流或日历数据时使用。
 ---
 
 # anysdk：Alpaca + Finviz 数据 SDK
@@ -18,12 +18,12 @@ SDK 源码——旧 `crates/alpaca-api` / `crates/finviz-api` 已删除;SDK 的�
 | `anysdk::finviz_sdk` | Finviz Elite CSV 导出:screener(`Parameter`/`ScreenerType`/`EXPORT_COLUMNS`)+ calendar(economic / earnings);**全部字段保留导出原文** |
 | `anysdk::utils` | 核心架构:`HttpExecutor` / `Method` / `HttpResponse` / 泛型 `Client` |
 
-## Client 构造(本项目集成点:relay-server)
+## Client 构造(本项目集成点:server)
 
 SDK 的 `Client<T, E>` 是泛型的:T 是 HTTP 客户端类型,E 是使用方实现的
-`HttpExecutor<T>`。**2026-11 relay 化后,本仓库里对接 anysdk 的只有
-`crates/server`(relay-server)**——客户端不再直连 Alpaca/Finviz,只持
-relay-server 的一条 TCP。server 的执行器与客户端别名在
+`HttpExecutor<T>`。**2026-11 server 化后,本仓库里对接 anysdk 的只有
+`crates/server`(server)**——客户端不再直连 Alpaca/Finviz,只持
+server 的一条 TCP。server 的执行器与客户端别名在
 `crates/server/src/executor.rs`(reqwest 直用):
 
 | 类型 | 位置 | 说明 |

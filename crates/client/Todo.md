@@ -9,7 +9,7 @@
 ## 账号认证接入(Server 侧已定:邮箱+密码,单设备会话)
 
 - 登录/注册窗口:email + password + 用户名(注册时),错误提示;Server 域名待定
-- 会话 token 存 OS keyring(service "ZenSidus",新增条目 session-token),不落盘
+- 会话 token 不落盘、仅内存态(keyring 已移除,与连接 token 同策略)
 - gateway_sdk:所有请求统一注入 `Authorization: Bearer <token>`;收到 401 → 清 token、提示重新登录
 - 启动时 `GET /auth/me` 校验本地 token,失效则静默回到未登录态
 - 设置同步(可选,后做):`user_settings` GET/PUT,revision 乐观锁;同步子集 = language/theme/watchlists/finviz 预设/translate/small_clock,window_state 不同步,API 凭据永不上云

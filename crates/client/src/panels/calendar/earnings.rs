@@ -107,8 +107,8 @@ impl EarningsCalendarPanel {
         datatable::load_rows(
             table,
             tr!("app.calendar.earnings.failed"),
-            move |relay| async move {
-                match relay
+            move |server| async move {
+                match server
                     .rpc_checked(RpcRequestPayload::EarningsCalendar {
                         date: date.to_string(),
                     })

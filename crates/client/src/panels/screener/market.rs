@@ -28,7 +28,7 @@ use crate::tr;
 use crate::utils::exchanges::exchange_label;
 use crate::utils::settings::MarketScreenerPreset;
 use crate::utils::state::stream_dispatch::{SharedSpec, StreamSpec, spawn_filter_stage};
-use crate::utils::state::{RelayHubEvent, RelayStatus, AppState, SymbolWish};
+use crate::utils::state::{HubEvent, ServerStatus, AppState, SymbolWish};
 use crate::utils::{AppIcon, message, settings};
 use crate::widgets::datatable::{self, ExchangeTableDelegate};
 use crate::widgets::dialog::{MarketPresetDraft, open_confirm_dialog, open_market_preset_dialog};
@@ -85,14 +85,14 @@ impl Panel for MarketScreenerPanel {
             .or_else(|| preset_names(cx).first().cloned());
 
         let picker = StringPicker::new(preset_names(cx), preset.clone(), window, cx);
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
 
         // Connection status drives the message pump: connected attaches a
         // fresh broadcast receiver, any other status cancels it and drops
         // the cached quotes (nothing shown may be trusted anymore).
-        cx.subscribe(&hub, |this, hub, _: &RelayHubEvent, cx| {
+        cx.subscribe(&hub, |this, hub, _: &HubEvent, cx| {
             match hub.read(cx).status() {
-                RelayStatus::Connected => {
+                ServerStatus::Connected => {
                     this.set_connected(true, cx);
                     this.refresh_pump(cx);
                 }
@@ -173,7 +173,7 @@ fn preset_names(cx: &App) -> Vec<String> {
 }
 
 /// Ticker column of the market-screener export, located by header name (the
-/// SDK's market export pins the columns to No. + Ticker).
+/// server pins the market export columns to No. + Ticker).
 fn extract_tickers(result: &protocol::ScreenerExport) -> Vec<String> {
     let Some(col) = result
         .headers
@@ -247,8 +247,8 @@ impl MarketScreenerPanel {
             .as_ref()
             .map(|preset| preset.exchanges.clone())
             .unwrap_or_default();
-        let hub = cx.global::<AppState>().relay_hub.clone();
-        let connected = matches!(hub.read(cx).status(), RelayStatus::Connected);
+        let hub = cx.global::<AppState>().hub.clone();
+        let connected = matches!(hub.read(cx).status(), ServerStatus::Connected);
         self.exchanges = exchanges.clone();
         self.tables = exchanges
             .into_iter()
@@ -289,7 +289,7 @@ impl MarketScreenerPanel {
             quotes: true,
             ..Default::default()
         };
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
         hub.update(cx, |hub, _| {
             hub.set_symbols(
                 self.subscriber,
@@ -305,7 +305,7 @@ impl MarketScreenerPanel {
     /// (Re)attach the broadcast-receiver pump. Quotes arrive for the whole
     /// union; each table's delegate filters for its own pool.
     fn refresh_pump(&mut self, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
         let clock = hub.read(cx).clock();
         let Some(rx) = hub.read(cx).stock_messages() else {
             return;
@@ -427,11 +427,11 @@ impl MarketScreenerPanel {
             );
             return;
         };
-        // Finviz token 已下沉服务端;唯一的前置条件是 relay 在线。
-        let Ok(relay) = AppState::relay(cx) else {
+        // Finviz token 已下沉服务端;唯一的前置条件是 server 在线。
+        let Ok(server) = AppState::server(cx) else {
             message::error(
-                tr!("app.market_screener.no_relay"),
-                anyhow::anyhow!("relay is not connected"),
+                tr!("app.market_screener.no_server"),
+                anyhow::anyhow!("server is not connected"),
                 cx,
             );
             return;
@@ -448,7 +448,7 @@ impl MarketScreenerPanel {
         }
         cx.spawn(async move |this, cx| {
             let result = async {
-                match relay
+                match server
                     .rpc_checked(RpcRequestPayload::MarketScreenerExport { parameter })
                     .await?
                 {
@@ -565,7 +565,7 @@ impl gpui_kit::base::dock::Panel for MarketScreenerPanel {
     }
 
     fn on_removed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().relay_hub.clone();
+        let hub = cx.global::<AppState>().hub.clone();
         let subscriber = self.subscriber;
         hub.update(cx, |hub, _| {
             hub.set_symbols(subscriber, SymbolWish::default())

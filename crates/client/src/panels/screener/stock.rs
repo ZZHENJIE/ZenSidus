@@ -154,11 +154,11 @@ impl StockScreenerPanel {
         else {
             return;
         };
-        // Finviz token 已下沉服务端;唯一的前置条件是 relay 在线。
-        let Ok(relay) = AppState::relay(cx) else {
+        // Finviz token 已下沉服务端;唯一的前置条件是 server 在线。
+        let Ok(server) = AppState::server(cx) else {
             message::error(
-                tr!("app.stock_screener.no_relay"),
-                anyhow::anyhow!("relay is not connected"),
+                tr!("app.stock_screener.no_server"),
+                anyhow::anyhow!("server is not connected"),
                 cx,
             );
             return;
@@ -178,7 +178,7 @@ impl StockScreenerPanel {
         };
         cx.spawn(async move |cx| {
             let result = async {
-                match relay
+                match server
                     .rpc_checked(RpcRequestPayload::ScreenerExport { parameter })
                     .await?
                 {

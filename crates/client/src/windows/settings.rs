@@ -3,7 +3,7 @@
 //! here and seeded from the persisted theme; a commit persists the hex and
 //! re-applies the theme tokens.
 
-mod relay;
+mod server;
 
 mod general;
 mod logs;
@@ -21,7 +21,7 @@ use gpui_kit::{
     div,
 };
 
-use crate::utils::state::{RelayHubEvent, AppState};
+use crate::utils::state::{HubEvent, AppState};
 use crate::utils::{AppIcon, Theme, settings, theme};
 use crate::windows::{AppWindow, WindowType, hook_should_close};
 
@@ -168,8 +168,8 @@ impl AppWindow for SettingsWindow {
         cx.observe_global::<AppState>(|_, cx| cx.notify()).detach();
 
         // Connection status changes come from the hub's background thread.
-        let hub = cx.global::<AppState>().relay_hub.clone();
-        cx.subscribe(&hub, |_, _, _: &RelayHubEvent, cx| {
+        let hub = cx.global::<AppState>().hub.clone();
+        cx.subscribe(&hub, |_, _, _: &HubEvent, cx| {
             cx.notify();
         })
         .detach();
@@ -216,7 +216,7 @@ impl AppWindow for SettingsWindow {
         div().flex_1().min_h_0().overflow_hidden().child(
             Settings::new("settings")
                 .page(self.general_page())
-                .page(self.relay_page())
+                .page(self.server_page())
 
                 .page(self.market_screener_page())
                 .page(self.small_clock_page())

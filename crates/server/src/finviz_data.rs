@@ -1,6 +1,6 @@
 //! Finviz Elite 日历数据加工:SDK 保留导出单元格原文(无时区换算、无
 //! "All Day" 归一),本模块把 US-Eastern 墙钟解析为毫秒时间戳并产出协议
-//! DTO。逻辑与测试自原 `gateway_sdk::finviz` 移植(该 crate 随 relay 化退役)。
+//! DTO。逻辑与测试自原 `gateway_sdk::finviz` 移植(该 crate 随 server 化退役)。
 
 use anyhow::Context;
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, TimeZone};
