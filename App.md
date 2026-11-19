@@ -19,7 +19,7 @@
 - **toolbar_buttons**:面板自定义的图标按钮组(`icon_button(id, icon, tooltip, disabled, on_click)`)。
 - **title_suffix + 管理下拉框**(`StringPicker::managed_element`):单选下拉 + 底部按钮行,可选**添加/编辑/删除**三按钮(添加恒可用;编辑/删除在未选中时置灰;点击回调统一收到当前选中值)。Watchlist/股票筛选器/市场筛选器三处共用。
 - **生命周期**:面板切走(非激活 tab)→ 暂停流订阅 + 停消息泵;切回/流重连 → 恢复;面板关闭 → 退订 + `dump` 持久化;应用重启 → 按持久化布局恢复全部面板与选中状态。
-- **消息泵**(所有实时面板):后台过滤级联(`stream_dispatch::filter_stage`)按面板 `StreamSpec`(symbols/trades/quotes/min_size/exchanges)过滤全量广播流 → 有界通道 → 主线程前景泵逐批提交。过载丢批不积压。stderr 打印 `[lag] panel: in~/fwd~/oldest_max/dropped` 诊断行。
+- **消息泵**(所有实时面板):后台过滤级联(`stream_dispatch::filter_stage`)按面板 `StreamSpec`(symbols/trades/quotes/min_size/exchanges)过滤全量广播流 → 有界通道 → 主线程前景泵逐批提交。过载丢批不积压。`[lag] panel: in~/fwd~/oldest_max(对时补偿后的真延迟)/raw/dropped` 诊断行默认关闭,设 `ZENSIDUS_LAG=1` 打开。
 
 **用户交互(全面板共用)**
 - 搜索标的对话框(`open_search_symbol_dialog`):搜索框 + 结果列表,选中回调;被 Watchlist(添加)、Quote(切换跟随)、Trades(切换 tape)、Stock News(切换标的)复用。

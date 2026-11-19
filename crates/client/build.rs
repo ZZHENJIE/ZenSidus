@@ -6,7 +6,7 @@ fn main() {
         let mut res = winresource::WindowsResource::new();
         res.set_icon("assets/icons/zen-sidus.ico");
 
-        res.set("ProductVersion", "0.0.1 beta");
+        res.set("ProductVersion", env!("CARGO_PKG_VERSION"));
         res.set("FileDescription", "ZenSidus");
         res.set("LegalCopyright", "Copyright © 2026 zensidus.com");
 

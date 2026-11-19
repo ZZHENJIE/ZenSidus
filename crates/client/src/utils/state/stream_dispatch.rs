@@ -145,6 +145,13 @@ impl StreamSpec {
     }
 }
 
+/// `[lag]` 诊断行默认关闭(生产 stderr 无噪声);设 `ZENSIDUS_LAG=1` 重新
+/// 打开——验收线路延迟(对时补偿后的 oldest_max)、排查掉批时用。
+fn lag_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("ZENSIDUS_LAG").is_ok_and(|v| v != "0"))
+}
+
 /// Console diagnostics for one stage, one line per 2 seconds: total in,
 /// forwarded out, the oldest message age in the window, and dropped batches.
 /// With the relay clock estimate available the age is compensated to the
@@ -175,7 +182,9 @@ impl Probe {
     }
 
     fn lagged(&mut self, n: u64) {
-        eprintln!("[lag] stage skipped {n} messages (receiver behind)");
+        if lag_enabled() {
+            eprintln!("[lag] stage skipped {n} messages (receiver behind)");
+        }
     }
 
     fn step(
@@ -216,6 +225,9 @@ impl Probe {
         self.last_print = Some(std::time::Instant::now());
         let total_rate = (self.total_in as f64 / seconds).round() as usize;
         let forwarded_rate = (self.forwarded as f64 / seconds).round() as usize;
+        if !lag_enabled() {
+            return;
+        }
         if self.clock.is_some() {
             eprintln!(
                 "[lag] {panel}: in~{total_rate}/s fwd~{forwarded_rate}/s oldest_max={}ms raw={}ms dropped={}",
