@@ -143,11 +143,11 @@ impl Hub {
         self.server.is_some()
     }
 
-    /// Start the server client. The token comes from the connect dialog (it
-    /// is never persisted); address/TLS options are re-read from the settings
-    /// on every attempt, so edits apply on the next connect. Re-entrant calls
-    /// while up are ignored.
-    pub fn connect(&mut self, token: String, cx: &mut Context<Self>) {
+    /// Start the server client. The auth code comes from the connect dialog
+    /// (a fresh TOTP code per connect — it is never persisted); address/TLS
+    /// options are re-read from the settings on every attempt, so edits apply
+    /// on the next connect. Re-entrant calls while up are ignored.
+    pub fn connect(&mut self, code: String, cx: &mut Context<Self>) {
         if self.server.is_some() {
             return;
         }
@@ -156,7 +156,7 @@ impl Hub {
             self.fail(anyhow::anyhow!("no tokio runtime available"), cx);
             return;
         };
-        let Some(config) = cx.global::<super::AppState>().settings.server.config(&token) else {
+        let Some(config) = cx.global::<super::AppState>().settings.server.config(&code) else {
             self.fail(anyhow::anyhow!("server address is empty"), cx);
             return;
         };

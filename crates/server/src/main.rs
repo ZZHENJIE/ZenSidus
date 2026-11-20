@@ -82,6 +82,8 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         upstream_tx,
         hub: Mutex::new(hub::SubscriptionHub::new()),
         clients: Mutex::new(HashMap::new()),
+        dropped_frames: AtomicU64::new(0),
+        sessions: Mutex::new(HashMap::new()),
         next_client_id: AtomicU64::new(1),
     });
     state::spawn(Arc::clone(&app), stock, news, upstream_rx);

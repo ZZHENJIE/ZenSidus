@@ -16,11 +16,11 @@ use protocol::{
 use protocol::rpc::SearchItem;
 
 /// 处理一个 RPC 请求。`rpc_id` 是请求 id(RestProgress 帧用它回填 req_id);
-/// `progress_tx` 是该会话的下行出口(bars 进度帧专用)。
+/// `progress_tx` 是该会话的下行出口(bars 进度帧专用,有界通道,与推送同源)。
 pub async fn handle(
     state: &AppState,
     rpc_id: u32,
-    progress_tx: &mpsc::UnboundedSender<Frame>,
+    progress_tx: &mpsc::Sender<Frame>,
     payload: RpcRequestPayload,
 ) -> Result<RpcResponsePayload, String> {
     match payload {
@@ -68,7 +68,7 @@ pub async fn handle(
             let all = state
                 .alpaca
                 .bars_all_with_progress(&params, |fetched| {
-                    let _ = progress_tx.send(Frame::RestProgress {
+                    let _ = progress_tx.try_send(Frame::RestProgress {
                         req_id: rpc_id,
                         fetched: fetched as u64,
                     });

@@ -1,6 +1,6 @@
 ---
 name: zensidus-server
-description: 'Architecture, wire protocol contract, config and deployment of the ZenSidus server crate (crates/server): TCP session lifecycle (Hello token auth, Welcome clock sync, Ping/Pong heartbeat), SubscriptionHub (per-client wishes → upstream union with refcounting), RPC id routing + handlers, anysdk upstream integration (ReqwestExecutor, supervisor self-healing streams), the three web proxies (futunn/deepseek/iposcoop, simd-json), finviz CSV → protocol DTO mapping, server.toml config, CI single-zip packaging + install-server.sh + systemd zensidus.service + nginx TLS termination. Use when touching any file under crates/server or the protocol crate wire format, changing auth/subscription/RPC behavior, editing server.toml, or deploying/upgrading the VPS service.'
+description: 'Architecture, wire protocol contract, config and deployment of the ZenSidus server crate (crates/server): TCP session lifecycle (Hello TOTP auth-code verification with ±1 window, Welcome clock sync, Ping/Pong heartbeat), SubscriptionHub (per-client wishes → upstream union with refcounting), RPC id routing + handlers, anysdk upstream integration (ReqwestExecutor, supervisor self-healing streams), the three web proxies (futunn/deepseek/iposcoop, simd-json), finviz CSV → protocol DTO mapping, server.toml config, CI single-zip packaging + install-server.sh + systemd zensidus.service + nginx TLS termination. Use when touching any file under crates/server or the protocol crate wire format, changing auth/subscription/RPC behavior, editing server.toml, or deploying/upgrading the VPS service.'
 ---
 
 # ZenSidus Server (crates/server)
@@ -15,12 +15,13 @@ crates/server/src/
 ├── main.rs       # 入口:argv[1] / SERVER_CONFIG env / server.toml → Config::load →
 │                 # tracing(env-filter)→ 上游连接(connect_with_retry 直到成功)
 │                 # → 常驻任务 → TCP listener 循环
-├── config.rs     # server.toml 反序列化(listen/token/log_level/alpaca/finviz/
+├── config.rs     # server.toml 反序列化(listen/totp_secret/log_level/alpaca/finviz/
 │                 # deepseek/proxy);真实文件 gitignored,样例 server.toml.example
 ├── state.rs      # AppState:client_id 分配 / apply_diff(HubDiff → 上游订阅命令)/
 │                 # fan_out(Frame 广播到全部会话)/ spawn(上游泵:anysdk 消息
 │                 # → mapping → fan_out;上游命令走 mpsc)
-├── session.rs    # 每连接一个 task:Hello 验 token(不符断开)→ Welcome 对时 →
+├── session.rs    # 每连接一个 task:Hello 验凭据(TOTP ±1 窗口,或会话令牌;
+│                 # 不符回 AuthFail 后断开)→ Welcome 对时+轮换下发令牌 →
 │                 # 心跳(客户端 10s Ping,60s 无帧判死)→ Subscribe/Unsubscribe
 │                 # → RPC 帧转 rpc::handle;单客户端失败不影响其他会话
 ├── hub.rs        # SubscriptionHub:per-client 意愿(symbol+Channels)→ 上游并集
@@ -42,7 +43,9 @@ crates/server/src/
 ## 线协议契约(protocol crate,唯一契约)
 
 帧格式 `[u32 LE 长度][postcard 编码的 Frame]`,一条 TCP 长连接。会话流程:
-client 首发 `Hello{token}` → server 回 `Welcome`(顺带对时样本)→ 客户端
+client 首发 `Hello{auth}`——首连 `HelloAuth::Totp`(认证器 6 位码,服务端
+roka_totp ±1 窗口校验),重连 `HelloAuth::Session`(会话令牌,免输码)→
+server 回 `Welcome`(顺带对时 + **轮换下发新会话令牌**,旧令牌即作废)→ 客户端
 10s `Ping`/server `Pong`;订阅 `Subscribe`/`Unsubscribe`(symbol 名字符串,
 server 侧 intern);推送 `Quote`/`Trade`/`Bar`/`News`;RPC 请求-响应按 id
 路由,`bars` 拉取过程发 `RestProgress` 进度帧。
@@ -79,14 +82,23 @@ server 侧 intern);推送 `Quote`/`Trade`/`Bar`/`News`;RPC 请求-响应按 id
 1. crate 声明 `unsafe_code = "deny"`:simd-json 0.19 的 `from_str(&mut str)`
    是 `unsafe fn` → 一律用 `simd_json::from_slice(&mut bytes)`;原地解析会
    **改写缓冲区**,web.rs 的错误快照(`short`)必须在解析前截取。
-2. 客户端 token 只在 `Hello` 比对,不符直接断开;凭据(Alpaca/Finviz/
-   DeepSeek)只存在于 server.toml,**永远不下发客户端**(客户端 token 也不
-   落盘,见 zensidus-client)。
+2. 认证 = TOTP:server.toml 持 `totp_secret`(Base32),客户端 Hello 携带
+   认证器生成的 6 位码,无效/过期回 `AuthFail` 后断开;凭据(Alpaca/Finviz/
+   DeepSeek)只存在于 server.toml,**永远不下发客户端**;动态码本身 30 秒过期、
+   重放窗口极窄,客户端不持密钥(见 zensidus-client)。
 3. web.rs 三个代理是从 TS Gateway worker 逐行移植的:改行为前先对照原逻辑
    (IPO 表第 6 列跳过、futunn `marketType == 2`、数值列容错 0 等)——测试
    锚定了这些行为,改了行为要同步改测试。
 4. `fan_out` 广播给所有会话,订阅协商全在 SubscriptionHub(纯逻辑);排查
    "客户端收不到推送"先看 HubDiff 是否为空(并集没变化就不会下发)。
+5. **下行通道有界 + 有损**(session.rs `OUTBOUND_CAPACITY` 2048):慢客户端
+   吃 `try_send` 丢帧(计 `dropped_frames`,30s `ingest health` 日志汇总),
+   而不是无限堆积延迟。**通道操作一律 `try_send`**——`Sender::send` 是
+   async,`let _ = tx.send(..)` 会把 Future 静默丢掉、帧永远发不出去
+   (Welcome 消失这种"客户端等 60s 超时"的坑就是这么来的)。
+6. `ingest health` 日志(30s 一条:lag_ms_max/messages/fan_out_dropped)是
+   延迟归因的唯一手段:lag 大且无 drop = 上游(Alpaca→server)段被限速,
+   客户端重连无效,等量能回落或换 feed;drop 增长 = 下发段慢客户端。
 5. 心跳判定是"60s 无**任何**客户端帧",不是只看 Ping——客户端的 RPC 请求
    同样续命。
 

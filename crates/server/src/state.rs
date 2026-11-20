@@ -2,9 +2,11 @@
 //! 推送泵(上游广播 → Frame → 扇出给全部客户端)、状态日志。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use tokio::sync::mpsc;
 
 use crate::config::Config;
@@ -20,6 +22,10 @@ pub enum UpstreamCommand {
     Unsubscribe(anysdk::alpaca_stream::StockSubscription),
 }
 
+/// 会话令牌的存活时长:客户端断线后在这个窗口内重连可凭令牌免输动态码。
+/// 超时(或服务端重启、令牌被轮换)则必须重新过 TOTP。
+pub const SESSION_TTL: Duration = Duration::from_secs(30 * 60);
+
 pub struct AppState {
     pub config: Config,
     pub http: reqwest::Client,
@@ -29,14 +35,44 @@ pub struct AppState {
     pub upstream_tx: mpsc::UnboundedSender<UpstreamCommand>,
     /// per-client 意愿聚合。
     pub hub: Mutex<SubscriptionHub>,
-    /// 已认证客户端的下行出口(id → sender),推送扇出用。
-    pub clients: Mutex<HashMap<u64, mpsc::UnboundedSender<Frame>>>,
+    /// 已认证客户端的下行出口(id → 有界 sender),推送扇出用。满了由
+    /// [`Self::fan_out`] 丢新帧并计 `dropped_frames`——慢客户端吃丢帧,
+    /// 而不是拖出分钟级延迟堆积。
+    pub clients: Mutex<HashMap<u64, mpsc::Sender<Frame>>>,
+    /// fan_out 因出站通道满而丢弃的帧数(30s 汇总进 ingest health 日志)。
+    pub dropped_frames: AtomicU64,
+    /// 会话令牌(认证成功时下发,客户端重连免输动态码)→ 最近使用时刻。
+    /// 仅内存:服务端重启即全部失效,回到 TOTP 认证。
+    pub sessions: Mutex<HashMap<String, Instant>>,
     pub next_client_id: AtomicU64,
 }
 
 impl AppState {
     pub fn new_client_id(&self) -> u64 {
         self.next_client_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// 签发一个新会话令牌(UUID v4)。轮换语义:旧令牌由调用方移除。
+    pub fn new_session_token(&self) -> String {
+        let token = uuid::Uuid::new_v4().to_string();
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(token.clone(), Instant::now());
+        token
+    }
+
+    /// 客户端凭会话令牌请求重连:令牌有效(且未超 TTL)则**轮换**——移除
+    /// 旧令牌、签发新令牌返回,被盗用的旧令牌只能用一次;无效返回 `None`
+    /// (调用方回 `AuthFail`)。顺手惰性清理超 TTL 的过期令牌。
+    pub fn resume_session(&self, token: &str) -> Option<String> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let now = Instant::now();
+        sessions.retain(|_, seen| now.duration_since(*seen) < SESSION_TTL);
+        sessions.remove(token)?;
+        let fresh = uuid::Uuid::new_v4().to_string();
+        sessions.insert(fresh.clone(), Instant::now());
+        Some(fresh)
     }
 
     /// 把差量发往上游(两个方向各自非空才发,避免空订阅帧打到上游)。
@@ -53,11 +89,20 @@ impl AppState {
         }
     }
 
-    /// 扇出一帧给全部已认证客户端。
+    /// 扇出一帧给全部已认证客户端。有界通道 + `try_send`:客户端消费跟
+    /// 不上时丢掉这一帧(行情 Quote 本就 latest-wins,Trade/Bar 在极端
+    /// 突发下偶缺可接受),换来的是队列深度有界 = 延迟上界有界。
     pub fn fan_out(&self, frame: &Frame) {
         let clients = self.clients.lock().unwrap();
         for sender in clients.values() {
-            let _ = sender.send(frame.clone());
+            match sender.try_send(frame.clone()) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    self.dropped_frames.fetch_add(1, Ordering::Relaxed);
+                }
+                // 会话已死但注销尚未跑完;写循环退出路径会移除它。
+                Err(mpsc::error::TrySendError::Closed(_)) => {}
+            }
         }
     }
 }
@@ -94,12 +139,45 @@ pub fn spawn(
         }
     });
 
-    // 股票推送泵。
+    // 股票推送泵 + 摄取健康遥测:30s 汇总一条日志(窗口内消息数、交换所
+    // 时间戳落后本地钟的最大值、fan_out 丢帧数)。max lag 大且无 drop =
+    // 上游(Alpaca→server)段被限速;drop 计数增长 = 下发段慢客户端。
+    // 这是区分两种延迟堆积的唯一手段,开盘时段尤其要看。
     let stock_pump_state = Arc::clone(&state);
+    let max_ingest_lag_ms = Arc::new(AtomicI64::new(0));
+    let ingested = Arc::new(AtomicU64::new(0));
+    {
+        let state = Arc::clone(&stock_pump_state);
+        let max_ingest_lag_ms = Arc::clone(&max_ingest_lag_ms);
+        let ingested = Arc::clone(&ingested);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(30));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                ticker.tick().await;
+                let lag_ms = max_ingest_lag_ms.swap(0, Ordering::Relaxed);
+                let messages = ingested.swap(0, Ordering::Relaxed);
+                let dropped = state.dropped_frames.swap(0, Ordering::Relaxed);
+                if messages > 0 || dropped > 0 {
+                    tracing::info!(
+                        lag_ms_max = lag_ms,
+                        messages,
+                        fan_out_dropped = dropped,
+                        "ingest health"
+                    );
+                }
+            }
+        });
+    }
     tokio::spawn(async move {
         loop {
             match stock_rx.recv().await {
                 Ok(message) => {
+                    ingested.fetch_add(1, Ordering::Relaxed);
+                    if let Some(ts) = message_ts_ms(&message) {
+                        let lag = (Utc::now().timestamp_millis() - ts).max(0);
+                        max_ingest_lag_ms.fetch_max(lag, Ordering::Relaxed);
+                    }
                     if let Some(frame) = mapping::stock_message_to_frame(message) {
                         stock_pump_state.fan_out(&frame);
                     }
@@ -142,4 +220,16 @@ pub fn spawn(
             tracing::info!(?event, "upstream news stream status");
         }
     });
+}
+
+/// 消息携带的交换所时间戳(毫秒);无时间戳的变体返回 `None`(不计延迟)。
+fn message_ts_ms(message: &anysdk::alpaca_stream::StockMessage) -> Option<i64> {
+    use anysdk::alpaca_stream::StockMessage;
+    let time = match message {
+        StockMessage::Quote(quote) => quote.time,
+        StockMessage::Trade(trade) => trade.time,
+        StockMessage::MinuteBar(bar) | StockMessage::UpdatedBar(bar) | StockMessage::DailyBar(bar) => bar.time,
+        _ => return None,
+    };
+    Some(time.timestamp_millis())
 }

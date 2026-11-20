@@ -267,7 +267,7 @@ app:
       connected: Connected
       connecting: Connecting…
       disconnected: Disconnected
-      failed: Connection failed. Check the server address and token.
+      failed: Connection failed. Check the server address and auth code.
       reconnecting: Connection lost, reconnecting…
       latency: TCP latency
       subscribe_failed: "Subscribe failed after retries: %{symbols} — those symbols may have no data"
@@ -325,9 +325,9 @@ app:
     empty: No messages yet
     clear: Clear messages
   # ── 连接 Token 对话框(每次连接时输入,不落盘)─────────────────────────
-  token:
-    title: Server Token
-    placeholder: Preshared access token (this session only, never stored)
+  auth_code:
+    title: Server auth code
+    placeholder: 6-digit code from your authenticator (expires in 30s)
   notify:
     search_failed: Search failed. Check your network.
     save_failed: Failed to save settings
@@ -340,6 +340,7 @@ app:
     geometry_not_persisted: "Geometry of %{window} not persisted: %{err}"
     panel_not_registered: "No panel registered as %{name}"
     missed_stream_messages: "Watchlist missed %{count} stream messages"
+    auth_rejected: "Auth code invalid or expired — reconnect with a fresh one"
     settings_save_failed: "Failed to save settings: %{err}"
     default_config_write_failed: "Failed to write default config to %{path}: %{err}"
     settings_rename_fallback: "Atomic settings rename failed (%{err}); wrote directly"

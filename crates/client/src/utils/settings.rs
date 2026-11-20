@@ -193,14 +193,14 @@ pub struct Server {
 }
 
 impl Server {
-    /// 完整可用的连接配置,或 `None`(地址为空)。`token` 来自连接对话框,
-    /// 不属于持久化状态。
-    pub fn config(&self, token: &str) -> Option<ServerConfig> {
+    /// 完整可用的连接配置,或 `None`(地址为空)。`code` 是连接对话框里
+    /// 输入的当前 TOTP 动态码,不属于持久化状态。
+    pub fn config(&self, code: &str) -> Option<ServerConfig> {
         let addr = self.addr.trim();
-        let token = token.trim();
-        (!addr.is_empty() && !token.is_empty()).then(|| ServerConfig {
+        let code = code.trim();
+        (!addr.is_empty() && !code.is_empty()).then(|| ServerConfig {
             addr: addr.to_string(),
-            token: token.to_string(),
+            code: code.to_string(),
             tls: self.tls,
             tls_cert: (!self.tls_cert.trim().is_empty())
                 .then(|| PathBuf::from(self.tls_cert.trim())),
@@ -390,7 +390,7 @@ mod tests {
             "app.calendar.ipo.company",
             "app.small_clock.alert",
             "app.settings.small_clock",
-            "app.token.title",
+            "app.auth_code.title",
             "app.tokio_runtime_error",
         ];
         for locale in ["en-us", "zh-cn"] {

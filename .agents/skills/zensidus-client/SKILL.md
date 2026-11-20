@@ -18,8 +18,9 @@ crates/client/src/
 ├── lib.rs               # i18n! + bootstrap()(目录/日志/settings/locale)+ init_app()
 │                        # (gpui_kit::init/theme/MessageLog/http/AppState);main.rs 只是
 │                        # 它们的薄壳(examples/ 已删除,临时截图载体用完即删,见验证清单)
-├── main.rs              # bootstrap → init_app → panels::init → windows::init
-│                        # (无启动自动连接:token 每会话经连接对话框输入)
+├── main.rs              # bootstrap → init_app → panels::init → windows::init →
+│                        # prompt_connect(lib.rs:主窗口已恢复且地址已配置时自动弹
+│                        # 动态码对话框;无启动自动连接)
 ├── panels.rs            # Panel trait(const NAME/ICON/TITLE_KEY + new(info) + refresh
 │                        # 静态钩子 + default_title)+ PanelSpec 总表 all()(驱动注册与
 │                        # 菜单)+ open_in_center(按名走 PanelRegistry)+ fresh::<P>
@@ -30,7 +31,7 @@ crates/client/src/
 │                        # + 面板自持 NewsStream(subscribe "*",泵随面板常驻)
 ├── widgets/dialog/      # 跨窗口共用的对话框:open_*(window, cx, …) 入口(confirm 通用
 │                        # 确认 + dialog_footer / translate / search_symbol / screener_preset /
-│                        # token 连接令牌,状态条 Popover 与设置页共用)
+│                        # auth_code 连接动态码,状态条 Popover 与设置页共用)
 ├── widgets/picker.rs    # StringPicker:watchlist 分组 / screener preset 共用的单选 Combobox 壳
 ├── widgets/datatable/   # TableDelegate 实现,按族分目录(calendar/{economic,earnings,ipo}、
 │                        # news/{stock,market}、screener/stock、watchlist)= 面板的
@@ -71,12 +72,12 @@ crates/client/src/
 一律走 RPC:`server.rpc_checked(RpcRequestPayload::…)`,远程表格经
 `datatable::load_rows`(闭包拿 `ServerClient`)。旧 `utils/executor.rs` 三客户端、
 独立 `NewsStream`、`gateway_sdk` 已全部退役;Alpaca/Finviz/DeepSeek 凭据在
-**server 侧** `server.toml`,客户端只持 server token(连接对话框输入,
-仅本会话内存态,不落盘;keyring 已于 2026-11 移除)。
+**server 侧** `server.toml`,客户端只持一次性动态码(连接对话框输认证器上的 6 位码,
+30 秒过期;密钥 totp_secret 只在服务端配置,keyring 已于 2026-11 移除)。
 server 侧架构与部署见 `zensidus-server` 技能;上游 SDK 细节见 `anysdk` 技能。
 
 数据文件(`~/.zensidus/`):`settings.json`(全部状态:主题/语言/server 地址/
-translate/watchlists/window_state 含各窗口 cache;token 不落盘)、`logs/`
+translate/watchlists/window_state 含各窗口 cache;动态码不落盘)、`logs/`
 (每日滚动,排查先看)。
 
 ## 窗口管理模型(改动前必读)
@@ -257,7 +258,7 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
   —— `global_mut::<AppState>` 自动通知所有 `observe_global::<AppState>` 窗口
   (全窗口刷新零接线)+ **防抖落盘**(500ms 合并写,2026-11-09 起;真正写盘
   在 `flush_settings`,temp+rename 原子写;**settings.json 永无密钥**——
-  server token 不落盘,连接对话框输入,keyring 已于 2026-11 移除)。
+  server 端密钥只在服务端配置,客户端每次连接输 6 位动态码,keyring 已于 2026-11 移除)。
   **新增退出路径必须调
   `flush_settings`**(close_event 两按钮、`persist_open_windows` 结尾已接)。
   失败进消息中心;窗口几何/布局的 `update_window_state` 也走它。
@@ -283,15 +284,18 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
     同看 NVDA 只订一次
   - **订阅重放在 hub**:ServerClient 自己自动重连(指数退避)但不保存订阅意愿,
     hub 监听其 `status()` 广播,每次 `Connected`(首连与重连)重发两个并集;
-    `Failed(reason)`(token 被拒等永久错误)→ Failed + teardown
+    `Failed(reason)`(动态码被拒 AuthFail 等永久错误)→ Failed + teardown
   - 分发不经 hub:面板各自 `hub.stock_messages()` 拿 broadcast 接收端(已是
     anysdk `StockMessage` 形状,由 ServerClient 从协议帧映射),`cx.spawn` 循环
     recv 按自己的 symbols 过滤;RPC 走 `server.rpc_checked(...)`
   - **staleness 看门狗保留**:数据流在流而最新交易所时间戳落后本地钟 >15s →
     `server.force_reconnect()` 换新路由(订阅经 Connected 重放)
-  - 连接入口 = 状态条色点 Popover / 设置页按钮 → **token 对话框**
-    (`widgets/dialog/token.rs`,`hub.connect(token)`)——token 不落盘、每会话
-    现输;ServerClient 启动后自动重连不阻塞 UI;无启动自动连接(2026-11 起)
+  - 连接入口 = **启动自动弹出**(prompt_connect,地址已配置时)/ 状态条色点 Popover / 设置页按钮 → **动态码对话框**
+    (`widgets/dialog/auth_code.rs`,`hub.connect(code)`)——码不落盘、每次连接输
+    认证器上的 6 位码。**认证成功后 Welcome 下发会话令牌**,ServerClient actor
+    在内存里持有它:之后的断线重连自动带令牌(`HelloAuth::Session`)免输码,
+    服务端轮换下发新令牌。令牌失效(服务端重启 / 30 分钟 TTL / 被轮换)时服务端
+    回 AuthFail → Failed 终态,重试无意义——重新点击连接输新码建链。
   - tokio Runtime 全 app 只有一个(AppState 持有,Drop 时 shutdown_background;
     构建失败则 hub 报 Failed 不 panic),hub 只存 Handle
 - **状态栏**(windows/main/status_bar.rs):左 = 最新消息(级别色点 + 截断文本 +

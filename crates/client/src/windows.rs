@@ -216,7 +216,7 @@ fn unregister_open_window(cx: &mut App, window_type: &WindowType) {
 /// Liveness is checked via the weak view reference — a read-only probe that
 /// never touches the window arena, so it also works while the window itself
 /// is mid-update (e.g. from a click handler inside that very window).
-fn find_open_window(cx: &App, window_type: WindowType) -> Option<AnyWindowHandle> {
+pub(crate) fn find_open_window(cx: &App, window_type: WindowType) -> Option<AnyWindowHandle> {
     let registry = cx.try_global::<WindowRegistry>()?;
     let entry = registry.0.get(&window_type)?;
     if entry.view.upgrade().is_some() {

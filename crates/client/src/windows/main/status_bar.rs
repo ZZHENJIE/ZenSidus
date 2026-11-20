@@ -20,7 +20,7 @@ use gpui_kit::{
 use crate::tr;
 use crate::utils::message::{Level, MessageLog};
 use crate::utils::state::{AppState, ServerStatus};
-use crate::widgets::dialog::open_token_dialog;
+use crate::widgets::dialog::open_auth_code_dialog;
 use crate::windows::MainWindow;
 
 impl MainWindow {
@@ -248,13 +248,13 @@ fn render_connection_status(cx: &mut App) -> impl IntoElement {
                                 .on_click({
                                     let hub = hub.clone();
                                     move |_, window, cx| {
-                                        // The token is typed per connect in the
+                                        // The auth code is typed per connect in
                                         // dialog (never persisted).
-                                        open_token_dialog(window, cx, {
+                                        open_auth_code_dialog(window, cx, {
                                             let hub = hub.clone();
-                                            move |token, cx| {
+                                            move |code, cx| {
                                                 hub.update(cx, |hub, cx| {
-                                                    hub.connect(token.to_string(), cx)
+                                                    hub.connect(code.to_string(), cx)
                                                 })
                                             }
                                         });

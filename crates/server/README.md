@@ -77,7 +77,7 @@ sudo install-server.sh server-v0.3.0       # 指定 tag
 
 ## 行为要点
 
-- 首连:客户端 `Hello.token` 与配置比对,不符断开;`Welcome` 顺带对时。
+- 首连:客户端 `Hello.auth` 携带认证器生成的 6 位 TOTP 动态码,服务端按 ±1 窗口校验,不符回 `AuthFail` 后断开;`Welcome` 顺带对时并下发会话令牌(UUID,内存保存,30 分钟 TTL,每次重连轮换)——客户端断线重连凭令牌免输码,服务端重启/令牌过期则重新过 TOTP。
 - 心跳:客户端 10s `Ping`,服务端回 `Pong`;60s 无客户端帧判定死链断开。
 - 订阅:per-client 意愿 → 上游并集(引用计数),客户端断开自动撤销。
 - RPC 与推送共用同一条连接,按 id 路由;`bars` 拉取过程发 `RestProgress`。

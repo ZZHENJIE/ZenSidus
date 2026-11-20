@@ -1,6 +1,6 @@
 //! Settings → Server: the server connection (the app's only outbound
 //! data link) and the live connection status with connect/disconnect
-//! actions. Connecting asks for the token in a dialog — it is never
+//! actions. Connecting asks for the auth code in a dialog — it is never
 //! persisted; address/TLS edits apply on the next connect.
 
 use gpui_kit::{
@@ -17,7 +17,7 @@ use gpui_kit::{
 use crate::tr;
 use crate::utils::state::{ServerStatus, AppState};
 use crate::utils::{AppIcon, settings};
-use crate::widgets::dialog::open_token_dialog;
+use crate::widgets::dialog::open_auth_code_dialog;
 use crate::windows::settings::{SettingsWindow, text_setting};
 
 /// Status dot + label, reflecting the hub live (the window subscribes to
@@ -60,12 +60,12 @@ fn server_actions_item() -> SettingItem {
                 .label(tr!("app.settings.connect"))
                 .disabled(connecting || up)
                 .on_click(move |_, window, cx| {
-                    // The token is typed per connect in the dialog; the hub
+                    // The auth code is typed per connect in dialog; the hub
                     // re-reads address/TLS from the settings itself.
-                    open_token_dialog(window, cx, {
+                    open_auth_code_dialog(window, cx, {
                         let hub = hub.clone();
-                        move |token, cx| {
-                            hub.update(cx, |hub, cx| hub.connect(token.to_string(), cx))
+                        move |code, cx| {
+                            hub.update(cx, |hub, cx| hub.connect(code.to_string(), cx))
                         }
                     });
                 })

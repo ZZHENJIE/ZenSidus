@@ -1,6 +1,6 @@
-//! Server token dialog: a single input for the preshared access token.
-//! The token is never persisted — it is typed fresh on every connect, so
-//! this dialog is the only path from a Connect button to the hub.
+//! Server auth-code dialog: a single input for the current TOTP code.
+//! The code is never persisted — it is typed fresh on every connect (30s
+//! validity), so this dialog is the only path from a Connect button to the hub.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -18,20 +18,20 @@ use gpui_kit::{
 use crate::tr;
 use crate::widgets::dialog::dialog_footer;
 
-/// Callback invoked with the confirmed token (already trimmed, non-empty).
-pub type OnToken = Arc<dyn Fn(&str, &mut App) + 'static>;
+/// Callback invoked with the confirmed code (already trimmed, non-empty).
+pub type OnCode = Arc<dyn Fn(&str, &mut App) + 'static>;
 
-/// Open the token dialog. `on_confirm` runs with the entered token, then the
+/// Open the auth-code dialog. `on_confirm` runs with the entered code, then the
 /// dialog closes. Empty input is a no-op (Confirm does nothing, Enter is
-/// ignored) — a trimmed-empty token is never handed upstream.
-pub fn open_token_dialog(
+/// ignored) — a trimmed-empty code is never handed upstream.
+pub fn open_auth_code_dialog(
     window: &mut Window,
     cx: &mut App,
     on_confirm: impl Fn(&str, &mut App) + 'static,
 ) {
-    let input = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("app.token.placeholder")));
+    let input = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("app.auth_code.placeholder")));
     let window_handle: AnyWindowHandle = window.window_handle();
-    let on_confirm: OnToken = Arc::new(on_confirm);
+    let on_confirm: OnCode = Arc::new(on_confirm);
 
     // Enter confirms (the input's PressEnter is the only reliable path — a
     // key-down handler would fire in addition and confirm twice).
@@ -68,7 +68,7 @@ pub fn open_token_dialog(
         let input = input.clone();
         dialog
             .width(px(360.))
-            .title(tr!("app.token.title"))
+            .title(tr!("app.auth_code.title"))
             .child(
                 v_flex()
                     .gap_2()

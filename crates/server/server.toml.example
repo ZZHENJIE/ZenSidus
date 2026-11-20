@@ -3,8 +3,9 @@
 # 下游监听地址。公网暴露由 Nginx stream 块终结 TLS 后转发到本地址(见 README)。
 listen = "127.0.0.1:9720"
 
-# 客户端 Hello.token 预共享密钥(openssl rand -hex 32)。
-token = "CHANGE_ME"
+# TOTP 密钥:必须为合法 Base32(仅 A-Z 与 2-7,不含 0/1/8/9,大小写不敏感)。
+# 生成(Git Bash):head -c 20 /dev/urandom | base32 | tr -d '='
+totp_secret = "JBSWY3DPEHPK3PXP"
 
 # tracing 过滤级别(RUST_LOG 语法)。
 log_level = "info"
@@ -16,7 +17,7 @@ secret = "..."
 feed = "delayed_sip"
 
 [finviz]
-token = "..."
+token = "your-finviz-elite-token"
 
 [deepseek]
 api_key = "..."

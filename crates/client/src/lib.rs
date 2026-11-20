@@ -62,3 +62,30 @@ pub fn init_app(settings: Settings, cx: &mut App) {
     let state = AppState::new(settings, cx);
     cx.set_global(state);
 }
+
+/// Startup connect prompt: with the main window restored and a server address
+/// configured, open the auth-code dialog right away — the code is typed fresh
+/// every session, so put the entry point in front of the user instead of
+/// making them find the status-bar dot. No address configured → skip silently
+/// (the settings page comes first).
+pub fn prompt_connect(cx: &mut App) {
+    let Some(handle) = windows::find_open_window(cx, windows::WindowType::Main) else {
+        return;
+    };
+    if cx
+        .global::<AppState>()
+        .settings
+        .server
+        .addr
+        .trim()
+        .is_empty()
+    {
+        return;
+    }
+    let _ = handle.update(cx, |_, window, cx| {
+        let hub = cx.global::<AppState>().hub.clone();
+        widgets::dialog::open_auth_code_dialog(window, cx, move |code, cx| {
+            hub.update(cx, |hub, cx| hub.connect(code.to_string(), cx));
+        });
+    });
+}

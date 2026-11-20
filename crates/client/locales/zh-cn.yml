@@ -267,7 +267,7 @@ app:
       connected: 已连接
       connecting: 连接中…
       disconnected: 未连接
-      failed: 连接失败,请检查服务器地址与 Token
+      failed: 连接失败,请检查服务器地址与动态码
       reconnecting: 连接断开,正在重连…
       latency: TCP 延迟
       subscribe_failed: "订阅失败(已重试): %{symbols},相关代码可能无行情"
@@ -325,9 +325,9 @@ app:
     empty: 暂无消息
     clear: 清空消息
   # ── 连接 Token 对话框(每次连接时输入,不落盘)─────────────────────────
-  token:
-    title: 服务器 Token
-    placeholder: 预共享访问令牌(仅本会话有效,不落盘)
+  auth_code:
+    title: 服务器动态码
+    placeholder: 6 位动态码(认证器生成,30 秒内有效)
   notify:
     search_failed: 搜索失败,请检查网络
     save_failed: 设置保存失败
@@ -340,6 +340,7 @@ app:
     geometry_not_persisted: "%{window} 的窗口位置未保存:%{err}"
     panel_not_registered: "没有注册名为 %{name} 的面板"
     missed_stream_messages: "自选面板落后 %{count} 条行情消息"
+    auth_rejected: 动态码无效或已过期,请重新连接
     settings_save_failed: "设置保存失败:%{err}"
     default_config_write_failed: "默认配置写入 %{path} 失败:%{err}"
     settings_rename_fallback: "原子重命名保存失败(%{err}),已改为直接写入"

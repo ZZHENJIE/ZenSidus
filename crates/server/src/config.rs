@@ -7,8 +7,11 @@ use serde::Deserialize;
 pub struct Config {
     /// 下游监听地址,如 `127.0.0.1:9720`(公网暴露由 Nginx 转发)。
     pub listen: String,
-    /// 客户端 `Hello.token` 预共享密钥。
-    pub token: String,
+    /// TOTP 预共享密钥,必须是合法 RFC 4648 Base32:**仅 `A-Z` 与 `2-7`**
+    /// (没有 0/1/8/9;大小写不敏感)。(Git Bash)`head -c 20 /dev/urandom | base32 | tr -d '='`
+    /// (20 字节正好 32 字符,无 padding)。客户端 `Hello.code` 携带当前
+    /// 动态码,±1 窗口(±30s)内有效。
+    pub totp_secret: String,
     /// tracing 过滤级别(默认 `info`)。
     #[serde(default = "default_log_level")]
     pub log_level: String,

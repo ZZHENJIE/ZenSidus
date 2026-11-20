@@ -5,7 +5,8 @@
 //! 已并入。本 crate 只描述协议:全 owned DTO + postcard 派生 + 编解码助手,
 //! client 与 server 各自映射到自己的内部类型。
 //!
-//! 会话流程:client 首发 [`Frame::Hello`] → server 回 [`Frame::Welcome`];
+//! 会话流程:client 首发 [`Frame::Hello`](携带 TOTP 动态码)→ server 回
+//! [`Frame::Welcome`];动态码无效/过期则 server 回 [`Frame::AuthFail`] 后断开;
 //! 之后双向自由——client 周期 [`Frame::Ping`],server 以 [`Frame::Pong`]
 //! 作流活性证据;订阅协商 [`Frame::Subscribe`] → [`Frame::Subscribed`];
 //! 行情推送(Quote/Trade/Bar/News)与 RPC(请求-响应,按 id 路由)共用同一条
@@ -97,14 +98,33 @@ pub struct NewsData {
     pub time_ms: i64,
 }
 
+/// 客户端首帧携带的凭据:首连是认证器生成的 TOTP 动态码;重连是此前认证
+/// 成功时服务端下发的会话令牌(服务端轮换下发新令牌,旧令牌即作废)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum HelloAuth {
+    Totp(String),
+    Session(String),
+}
+
 /// 线上唯一帧类型。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Frame {
     // ── 会话 ──
-    /// client 首帧;`token` 为服务端预共享密钥。
-    Hello { token: String, app_version: String },
-    /// server 确认(顺带对时,替代旧 timestamp 端点)。
-    Welcome { server_time_ms: i64 },
+    /// client 首帧。`auth` 两种凭据:TOTP 动态码(服务端 ±1 窗口校验)或
+    /// 会话令牌(断线重连免输码)。
+    Hello {
+        auth: HelloAuth,
+        app_version: String,
+    },
+    /// server 确认(顺带对时,替代旧 timestamp 端点);同时下发本次会话的
+    /// 令牌(每次认证轮换),客户端在内存里持有它用于后续重连。
+    Welcome {
+        server_time_ms: i64,
+        session_token: String,
+    },
+    /// server 拒绝认证(动态码无效/过期、会话令牌失效):发完即断开。客户端
+    /// 收到后停止重试(认证失败不是瞬态错误),等人工输入新码。
+    AuthFail { reason: String },
 
     // ── 心跳 ──
     /// client → server,10s 间隔。
@@ -226,11 +246,19 @@ mod tests {
     fn frame_roundtrips() {
         let frames = vec![
             Frame::Hello {
-                token: "secret-token".into(),
+                auth: HelloAuth::Totp("123456".into()),
+                app_version: "0.1.0".into(),
+            },
+            Frame::Hello {
+                auth: HelloAuth::Session("uuid-token".into()),
                 app_version: "0.1.0".into(),
             },
             Frame::Welcome {
                 server_time_ms: 1_733_000_000_000,
+                session_token: "uuid-token".into(),
+            },
+            Frame::AuthFail {
+                reason: "invalid auth code".into(),
             },
             Frame::Ping,
             Frame::Pong,

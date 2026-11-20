@@ -20,11 +20,15 @@ use std::time::Duration;
 use anyhow::Context as _;
 use chrono::{TimeZone, Utc};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+use crate::tr;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use anysdk::alpaca_stream::StockMessage;
 use anysdk::alpaca_stream::stocks::{BarMessage, QuoteMessage, TradeMessage};
-use protocol::{BarData, Channels, Frame, NewsData, RpcRequestPayload, RpcResponsePayload};
+use protocol::{
+    BarData, Channels, Frame, HelloAuth, NewsData, RpcRequestPayload, RpcResponsePayload,
+};
 
 /// 推送广播容量:与旧 anysdk 流一致。
 const STOCK_CAPACITY: usize = 4096;
@@ -75,12 +79,13 @@ impl ClockEstimate {
     }
 }
 
-/// 连接配置(从 settings 现读,重连间生效)。
+/// 连接配置(地址/TLS 从 settings 现读;`code` 来自连接对话框,是本次
+/// 连接使用的 TOTP 动态码——30 秒过期,过期后的重连由人工输新码发起)。
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     /// `host:port`。
     pub addr: String,
-    pub token: String,
+    pub code: String,
     /// true = TLS(服务器 Nginx 终结 TLS)。
     pub tls: bool,
     /// 固定校验的证书(PEM;CF Origin 证书不在公共信任链)。`None` = 标准
@@ -236,6 +241,9 @@ async fn run_actor(
 ) {
     let mut backoff = BACKOFF_START;
     let mut close_requested = false;
+    // 认证成功后服务端下发的会话令牌:断线重连时替代 TOTP 码(免输)。
+    // 仅存活于本 actor(内存),客户端重启即重新走 TOTP。
+    let mut session_token: Option<String> = None;
     set_status(&inner, ServerStatus::Connecting);
 
     loop {
@@ -251,7 +259,15 @@ async fn run_actor(
             }
         };
 
-        match run_session(stream, &config, Arc::clone(&inner), &mut commands).await {
+        match run_session(
+            stream,
+            &config,
+            &mut session_token,
+            Arc::clone(&inner),
+            &mut commands,
+        )
+        .await
+        {
             SessionEnd::Closed => break,
             SessionEnd::Rejected(reason) => {
                 // 服务端拒绝(token 不符等):重试无意义。
@@ -311,10 +327,13 @@ enum SessionEnd {
 }
 
 /// 单次会话:Hello → Welcome → 双向收发,直到链路断/手动关。
-/// 返回前把在途 RPC 全部报"connection lost"。
+/// 返回前把在途 RPC 全部报"connection lost"。`session_token` 进出同一处:
+/// 进 = 上次认证下发的令牌(优先于 TOTP 码);出 = 本次 Welcome 轮换的新
+/// 令牌,actor 持有它供后续重连使用。
 async fn run_session(
     mut stream: Box<dyn AsyncReadWrite>,
     config: &ServerConfig,
+    session_token: &mut Option<String>,
     inner: Arc<Inner>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
 ) -> SessionEnd {
@@ -326,9 +345,13 @@ async fn run_session(
         }
     };
 
-    // Hello。
+    // Hello:重连优先用会话令牌(免输动态码);首次连接才用 TOTP 码。
+    let auth = match session_token {
+        Some(token) => HelloAuth::Session(token.clone()),
+        None => HelloAuth::Totp(config.code.clone()),
+    };
     let hello = Frame::Hello {
-        token: config.token.clone(),
+        auth,
         app_version: concat!("ZenSidus/", env!("CARGO_PKG_VERSION")).to_string(),
     };
     if write_frame(&mut stream, &hello).await.is_err() {
@@ -348,9 +371,21 @@ async fn run_session(
             }
             Ok(Ok(n)) => match decoder.feed(&read_buf[..n]) {
                 Ok(frames) => {
-                    if let Some(Frame::Welcome { server_time_ms }) =
+                    // 认证被拒(动态码无效/过期、会话令牌失效):终态——
+                    // 重试无意义,等人工输新码(与网络断开的 Dropped 语义相反)。
+                    if let Some(Frame::AuthFail { .. }) =
+                        frames.iter().find(|f| matches!(f, Frame::AuthFail { .. }))
+                    {
+                        fail_all_rpcs(&mut rpcs, "auth failed");
+                        // 令牌已失效,清掉:下次连接回到 TOTP 码。
+                        *session_token = None;
+                        return SessionEnd::Rejected(tr!("app.log.auth_rejected").to_string());
+                    }
+                    if let Some(Frame::Welcome { server_time_ms, session_token: fresh }) =
                         frames.into_iter().find(|f| matches!(f, Frame::Welcome { .. }))
                     {
+                        // 轮换:服务端每次认证都下发新令牌,旧的立即作废。
+                        *session_token = Some(fresh);
                         break server_time_ms;
                     }
                 }
