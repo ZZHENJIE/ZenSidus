@@ -76,8 +76,8 @@ src/
 │   ├── datatable/        # 各表 delegate:trades / quote(单侧 Top of Book) /
 │   │   │                 #   watchlist / screener/{stock,market} / news/{stock,market} /
 │   │   │                 #   calendar/{economic,earnings,ipo}
-│   ├── kline/            # K 线图组件(纯自定义):state(KlineState/Timeframe)+
-│   │                     #   element(绘制+交互)+ scale(纯函数,单测);mod 含
+│   ├── kline.rs + kline/  # K 线图组件(纯自定义):state(KlineState/Timeframe)+
+│   │                     #   element(绘制+交互)+ scale(纯函数,单测);kline.rs 含
 │   │                     #   load_history(Bars RPC)与周期选择菜单,面板共用
 │   ├── dialog.rs         # 跨窗口共用对话框入口:confirm(+ dialog_footer)/ search_symbol /
 │   │                     #   translate / screener_preset / market_preset / auth_code(OtpInput)

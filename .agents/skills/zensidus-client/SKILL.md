@@ -35,11 +35,13 @@ crates/client/src/
 ├── widgets/dialog/      # 跨窗口共用的对话框:open_*(window, cx, …) 入口(confirm 通用
 │                        # 确认 + dialog_footer / translate / search_symbol / screener_preset /
 │                        # auth_code 连接动态码,状态条 Popover 与设置页共用)
-├── widgets/kline/       # K 线图组件(纯自定义;chart 面板 + 筛选器 Chart 视图
-│                        # 共用):state(KlineState 实体:bars/viewport/分钟桶
-│                        # 聚合/日线聚合(周/月/年))、element(自定义 Element
-│                        # 三阶段绘制+指针交互;wheel_zoom 开关、with_id 多实例)、
-│                        # scale(纯几何/刻度/美东标签,单测)、mod 公共入口:
+├── widgets/kline.rs     # K 线图组件(纯自定义;chart 面板 + 筛选器 Chart 视图
+│                        # 共用;**全项目唯一自绘 Element**——其余 UI 一律 GPUI
+│                        # Kit 组件组合,不得新增自绘):state(KlineState 实体:
+│                        # bars/viewport/分钟桶聚合/日线聚合(周/月/年))、
+│                        # element(自定义 Element 三阶段绘制+指针交互;
+│                        # wheel_zoom 开关、with_id 多实例)、
+│                        # scale(纯几何/刻度/美东标签,单测)、kline.rs 公共入口:
 │                        # load_history(Bars RPC,离线静默/代数防乱序)+
 │                        # timeframe_menu(扁平菜单,值后带单位词,单位切换处
 │                        # 分隔线)+ timeframe_item_label。周期 11 档:分
