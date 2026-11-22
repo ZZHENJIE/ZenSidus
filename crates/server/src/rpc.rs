@@ -56,28 +56,62 @@ pub async fn handle(
             end,
             limit,
         } => {
-            let params = bars::Params {
+            // 实测:Alpaca 的 bars 端点缺 `start` 时不报错而是返回空
+            // (`{"bars":{}}`)。客户端没传 start(Chart 面板默认不带)时,
+            // 服务端按 timeframe+limit 推导一个覆盖所需根数的起点,并用
+            // `sort=desc` 单页拉取——desc 顺序下第一页就是最新的 limit 根,
+            // 无需翻页(继续翻只会更旧);显式传了 start/end 的调用方维持
+            // 原分页语义(bars_all_with_progress + RestProgress 进度帧)。
+            let recent = start.is_none() && end.is_none() && limit > 0;
+            // start 字符串先算好再构造 Params(timeframe 会被 move 进去)。
+            let derived_start =
+                recent.then(|| bars_start_default(&timeframe, limit, chrono::Utc::now()));
+            let mut params = bars::Params {
                 symbols,
-                timeframe,
-                start,
                 end,
                 limit: (limit > 0).then_some(limit),
+                timeframe,
                 ..Default::default()
             };
-            let progress_tx = progress_tx.clone();
-            let all = state
-                .alpaca
-                .bars_all_with_progress(&params, |fetched| {
-                    let _ = progress_tx.try_send(Frame::RestProgress {
-                        req_id: rpc_id,
-                        fetched: fetched as u64,
-                    });
-                })
-                .await
-                .map_err(rpc_error("bars"))?;
+            let all = if recent {
+                params.sort = Some("desc".into());
+                params.start = derived_start;
+                let page = state
+                    .alpaca
+                    .bars(&params)
+                    .await
+                    .map_err(rpc_error("bars"))?;
+                let _ = progress_tx.try_send(Frame::RestProgress {
+                    req_id: rpc_id,
+                    fetched: page.bars.values().map(Vec::len).sum::<usize>() as u64,
+                });
+                page.bars
+            } else {
+                params.start = start;
+                let progress_tx = progress_tx.clone();
+                state
+                    .alpaca
+                    .bars_all_with_progress(&params, |fetched| {
+                        let _ = progress_tx.try_send(Frame::RestProgress {
+                            req_id: rpc_id,
+                            fetched: fetched as u64,
+                        });
+                    })
+                    .await
+                    .map_err(rpc_error("bars"))?
+            };
             Ok(RpcResponsePayload::Bars(
                 all.into_iter()
-                    .map(|(symbol, bars)| (symbol, bars.into_iter().map(bar_from_rest).collect()))
+                    .map(|(symbol, mut bars)| {
+                        // desc 拉回是"新→旧":截到 limit 根(单标的请求精确;
+                        // 多标的共享 limit 时近似)再翻回升序(协议按 time_ms
+                        // 升序约定,客户端 K 线依赖升序)。
+                        if recent {
+                            bars.truncate(limit as usize);
+                            bars.reverse();
+                        }
+                        (symbol, bars.into_iter().map(bar_from_rest).collect())
+                    })
                     .collect(),
             ))
         }
@@ -237,5 +271,124 @@ fn parameter_from_dto(dto: ScreenerParameter) -> anysdk::finviz_sdk::screener::P
         signal: dto.signal,
         filters: dto.filters,
         columns: dto.columns,
+    }
+}
+
+/// 无 `start` 时的默认起点:按 timeframe 的每根跨度 × limit 估算所需
+/// 跨度,再放大留出周末/节假日(日线及以上)与盘外休市(分钟周期)余量。
+/// 返回 RFC-3339(UTC)字符串,直接进 Alpaca 的 `start` 参数。
+fn bars_start_default(
+    timeframe: &str,
+    limit: u32,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let start = match parse_timeframe_minutes(timeframe) {
+        // 分钟周期:limit×bucket 是"市场时间"分钟,按 390 分钟/交易日折算
+        // 成交易日,×2 覆盖周末,再 +1 天余量。
+        Some(minutes) if minutes > 0 => {
+            let market_minutes = (limit as i64) * minutes;
+            let trading_days = (market_minutes + 389) / 390;
+            now - chrono::Duration::days(trading_days * 2 + 1)
+        }
+        // 日/周/月/年:每根覆盖的日历天数 × limit,再加 60 天节假日余量。
+        _ => {
+            let days_per_bar = parse_timeframe_days(timeframe).unwrap_or(1);
+            let days = ((limit as i64) * days_per_bar) * 12 / 10 + 60;
+            now - chrono::Duration::days(days)
+        }
+    };
+    start.to_rfc3339()
+}
+
+/// Alpaca timeframe 字符串 → 桶宽分钟("1Min"/"5Min"/"15Min"/"30Min" 原样;
+/// "1Hour" 等 → 60 倍数;"Day/Week/Month/Year" → None)。
+fn parse_timeframe_minutes(timeframe: &str) -> Option<i64> {
+    if let Some(value) = timeframe.strip_suffix("Min") {
+        return value.parse().ok();
+    }
+    if let Some(value) = timeframe.strip_suffix("Hour") {
+        return value.parse::<i64>().ok().map(|value| value * 60);
+    }
+    None
+}
+
+/// Alpaca timeframe 字符串 → 每根 bar 覆盖的日历天数(天/周/月/年;
+/// 分钟周期返回 None)。
+fn parse_timeframe_days(timeframe: &str) -> Option<i64> {
+    if let Some(value) = timeframe.strip_suffix("Day") {
+        return value.parse().ok();
+    }
+    if let Some(value) = timeframe.strip_suffix("Week") {
+        return value.parse::<i64>().ok().map(|value| value * 7);
+    }
+    if let Some(value) = timeframe.strip_suffix("Month") {
+        return value.parse::<i64>().ok().map(|value| value * 30);
+    }
+    if let Some(value) = timeframe.strip_suffix("Year") {
+        return value.parse::<i64>().ok().map(|value| value * 365);
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Datelike as _;
+
+    fn utc(y: i32, m: u32, d: u32) -> chrono::DateTime<chrono::Utc> {
+        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, y, m, d, 0, 0, 0)
+            .single()
+            .unwrap()
+    }
+
+    #[test]
+    fn timeframe_minutes() {
+        assert_eq!(parse_timeframe_minutes("1Min"), Some(1));
+        assert_eq!(parse_timeframe_minutes("5Min"), Some(5));
+        assert_eq!(parse_timeframe_minutes("15Min"), Some(15));
+        assert_eq!(parse_timeframe_minutes("30Min"), Some(30));
+        assert_eq!(parse_timeframe_minutes("1Hour"), Some(60));
+        assert_eq!(parse_timeframe_minutes("4Hour"), Some(240));
+        assert_eq!(parse_timeframe_minutes("1Day"), None);
+        assert_eq!(parse_timeframe_minutes("bogus"), None);
+    }
+
+    #[test]
+    fn timeframe_days() {
+        assert_eq!(parse_timeframe_days("1Day"), Some(1));
+        assert_eq!(parse_timeframe_days("1Week"), Some(7));
+        assert_eq!(parse_timeframe_days("1Month"), Some(30));
+        assert_eq!(parse_timeframe_days("1Year"), Some(365));
+        assert_eq!(parse_timeframe_days("5Min"), None);
+        assert_eq!(parse_timeframe_days("bogus"), None);
+    }
+
+    #[test]
+    fn bars_start_covers_requested_bars() {
+        // 5m × 500 = 2500 市场分钟 ≈ 7 个交易日 → 15 个日历日。
+        let now = utc(2026, 11, 20);
+        let start = bars_start_default("5Min", 500, now);
+        let dt = chrono::DateTime::parse_from_rfc3339(&start).unwrap();
+        assert_eq!(dt.num_days_from_ce() - now.num_days_from_ce(), -15);
+
+        // 1m × 1000 ≈ 3 个交易日 → 7 个日历日。
+        let start = bars_start_default("1Min", 1000, now);
+        let dt = chrono::DateTime::parse_from_rfc3339(&start).unwrap();
+        assert_eq!(dt.num_days_from_ce() - now.num_days_from_ce(), -7);
+
+        // 日线 × 500 ≈ 600 日历日 + 60 余量。
+        let start = bars_start_default("1Day", 500, now);
+        let dt = chrono::DateTime::parse_from_rfc3339(&start).unwrap();
+        assert_eq!(dt.num_days_from_ce() - now.num_days_from_ce(), -660);
+
+        // 周 × 500 = 3500 日历日 × 1.2 + 60。
+        let start = bars_start_default("1Week", 500, now);
+        let dt = chrono::DateTime::parse_from_rfc3339(&start).unwrap();
+        assert_eq!(dt.num_days_from_ce() - now.num_days_from_ce(), -4260);
+
+        // 月 × 500 = 15000 × 1.2 + 60。
+        let start = bars_start_default("1Month", 500, now);
+        let dt = chrono::DateTime::parse_from_rfc3339(&start).unwrap();
+        assert_eq!(dt.num_days_from_ce() - now.num_days_from_ce(), -18060);
     }
 }

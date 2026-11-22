@@ -99,16 +99,16 @@ impl TableDelegate for TradesDelegate {
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
         match col_ix {
-            0 => Column::new("time", tr!("app.trades.time")).width(px(96.)),
-            1 => Column::new("price", tr!("app.trades.price"))
+            0 => Column::new("price", tr!("app.trades.price"))
                 .width(px(76.))
                 .text_right(),
-            2 => Column::new("size", tr!("app.trades.size"))
+            1 => Column::new("size", tr!("app.trades.size"))
                 .width(px(72.))
                 .text_right(),
-            _ => Column::new("exchange", tr!("app.trades.exchange"))
+            2 => Column::new("exchange", tr!("app.trades.exchange"))
                 .width(px(76.))
                 .text_right(),
+            _ => Column::new("time", tr!("app.trades.time")).width(px(96.)),
         }
     }
 
@@ -123,10 +123,10 @@ impl TableDelegate for TradesDelegate {
         let mut width = datatable::measure_text(window, &self.column(col_ix, _cx).name);
         for row in &self.trades {
             let text = match col_ix {
-                0 => row.time.clone(),
-                1 => format!("{:.2}", row.price).into(),
-                2 => format!("{}", row.size).into(),
-                _ => row.exchange.clone().into(),
+                0 => format!("{:.2}", row.price).into(),
+                1 => format!("{}", row.size).into(),
+                2 => row.exchange.clone().into(),
+                _ => row.time.clone(),
             };
             width = width.max(datatable::measure_text(window, &text));
         }
@@ -163,10 +163,10 @@ impl TableDelegate for TradesDelegate {
     ) -> impl IntoElement {
         let cell = match self.trades.get(row_ix) {
             Some(row) => match col_ix {
-                0 => row.time.clone(),
-                1 => SharedString::from(format!("{:.2}", row.price)),
-                2 => SharedString::from(format!("{}", row.size)),
-                _ => SharedString::from(row.exchange.clone()),
+                0 => SharedString::from(format!("{:.2}", row.price)),
+                1 => SharedString::from(format!("{}", row.size)),
+                2 => SharedString::from(row.exchange.clone()),
+                _ => row.time.clone(),
             },
             None => SharedString::default(),
         };

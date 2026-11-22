@@ -165,10 +165,14 @@ pub(crate) fn window_state_default() -> Vec<WindowState> {
 }
 
 /// A currently open window: its handle (for activation / persistence) plus
-/// a weak view reference for a read-only liveness check.
+/// a weak view reference for a read-only liveness check, and a sink for
+/// out-of-band persistence ([`persist_window_dock`]) — the concrete window
+/// type is erased, so the closure captures the weak view and dispatches to
+/// [`AppWindow::persist_dock_layout`].
 struct OpenWindow {
     handle: AnyWindowHandle,
     view: AnyWeakView,
+    persist: std::rc::Rc<dyn Fn(&mut App)>,
 }
 
 /// Windows currently open, keyed by their exact [`WindowType`]. Powers the
@@ -191,12 +195,14 @@ fn register_open_window(
     window_type: WindowType,
     handle: AnyWindowHandle,
     view: AnyView,
+    persist: std::rc::Rc<dyn Fn(&mut App)>,
 ) {
     registry_mut(cx).0.insert(
         window_type,
         OpenWindow {
             handle,
             view: view.downgrade(),
+            persist,
         },
     );
 }
@@ -224,6 +230,25 @@ pub(crate) fn find_open_window(cx: &App, window_type: WindowType) -> Option<AnyW
     } else {
         None
     }
+}
+
+/// Re-dump the dock layout of the window behind `handle` into its persisted
+/// cache (panels' `dump` payloads included). Panel-level state changes (the
+/// chart panel's symbol/timeframe) fire no [`DockEvent::LayoutChanged`], so
+/// panels call this after a change; a no-op for windows without a dock.
+pub(crate) fn persist_window_dock(handle: AnyWindowHandle, cx: &mut App) {
+    let Some(registry) = cx.try_global::<WindowRegistry>() else {
+        return;
+    };
+    let Some(persist) = registry
+        .0
+        .values()
+        .find(|open| open.handle == handle)
+        .map(|open| open.persist.clone())
+    else {
+        return;
+    };
+    persist(cx);
 }
 
 /// Smallest instance id of the given kind that is not currently open, so a

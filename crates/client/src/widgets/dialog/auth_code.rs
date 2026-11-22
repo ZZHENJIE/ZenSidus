@@ -1,4 +1,4 @@
-//! Server auth-code dialog: a single input for the current TOTP code.
+//! Server auth-code dialog: a 6-cell OTP input for the current TOTP code.
 //! The code is never persisted — it is typed fresh on every connect (30s
 //! validity), so this dialog is the only path from a Connect button to the hub.
 
@@ -10,7 +10,7 @@ use gpui_kit::{
     base::v_flex,
     component::{
         WindowExt,
-        input::{Input, InputEvent, InputState},
+        input::{OtpEvent, OtpInput, OtpState},
     },
     px,
 };
@@ -18,34 +18,32 @@ use gpui_kit::{
 use crate::tr;
 use crate::widgets::dialog::dialog_footer;
 
-/// Callback invoked with the confirmed code (already trimmed, non-empty).
+/// Callback invoked with the confirmed code (6 digits).
 pub type OnCode = Arc<dyn Fn(&str, &mut App) + 'static>;
 
+const CODE_LENGTH: usize = 6;
+
 /// Open the auth-code dialog. `on_confirm` runs with the entered code, then the
-/// dialog closes. Empty input is a no-op (Confirm does nothing, Enter is
-/// ignored) — a trimmed-empty code is never handed upstream.
+/// dialog closes. Filling the last cell confirms immediately (standard OTP
+/// UX); the Confirm button only submits a complete code.
 pub fn open_auth_code_dialog(
     window: &mut Window,
     cx: &mut App,
     on_confirm: impl Fn(&str, &mut App) + 'static,
 ) {
-    let input = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("app.auth_code.placeholder")));
+    let otp = cx.new(|cx| OtpState::new(CODE_LENGTH, window, cx));
     let window_handle: AnyWindowHandle = window.window_handle();
     let on_confirm: OnCode = Arc::new(on_confirm);
 
-    // Enter confirms (the input's PressEnter is the only reliable path — a
-    // key-down handler would fire in addition and confirm twice).
+    // 填满最后一位即自动确认:此时值必为完整 6 位数字(OtpState 只收数字)。
     cx.subscribe(
-        &input,
+        &otp,
         {
-            let input = input.clone();
+            let otp = otp.clone();
             let on_confirm = on_confirm.clone();
-            move |_, event: &InputEvent, cx| {
-                if let InputEvent::PressEnter { .. } = event {
-                    let token = input.read(cx).value().trim().to_string();
-                    if token.is_empty() {
-                        return;
-                    }
+            move |_, event: &OtpEvent, cx| {
+                if let OtpEvent::Complete = event {
+                    let token = otp.read(cx).value().to_string();
                     on_confirm(&token, cx);
                     let _ = window_handle.update(cx, |_, window, cx| window.close_dialog(cx));
                 }
@@ -54,30 +52,32 @@ pub fn open_auth_code_dialog(
     )
     .detach();
 
-    // Focus the input once, when the dialog layer is first built; later
+    // Focus the OTP cells once, when the dialog layer is first built; later
     // builder re-runs must not steal focus back.
     let initial_focus = Cell::new(true);
 
     window.open_dialog(cx, move |dialog, window, cx| {
         if initial_focus.replace(false) {
-            input.read(cx).focus_handle(cx).focus(window, cx);
+            otp.read(cx).focus_handle(cx).focus(window, cx);
         }
 
         let on_confirm = on_confirm.clone();
-        let input_view = Input::new(&input);
-        let input = input.clone();
+        let otp_view = OtpInput::new(&otp).groups(2);
+        let otp = otp.clone();
         dialog
             .width(px(360.))
             .title(tr!("app.auth_code.title"))
             .child(
                 v_flex()
-                    .gap_2()
-                    .child(input_view)
+                    .gap_3()
+                    .items_center()
+                    .child(otp_view)
                     .child(dialog_footer("token", move |_, window, cx| {
-                        let token = input.read(cx).value().trim().to_string();
-                        if token.is_empty() {
+                        // 未填满(中途点到 Confirm)不提交。
+                        if otp.read(cx).value().chars().count() != CODE_LENGTH {
                             return;
                         }
+                        let token = otp.read(cx).value().to_string();
                         on_confirm(&token, cx);
                         window.close_dialog(cx);
                     })),

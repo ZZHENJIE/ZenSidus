@@ -922,6 +922,7 @@ dependencies = [
  "anyhow",
  "anysdk",
  "chrono",
+ "chrono-tz",
  "directories",
  "futures",
  "gpui-kit",

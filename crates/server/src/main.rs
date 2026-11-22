@@ -33,6 +33,12 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
+    // 防呆:该开关只为本地开发方便(免开认证器输码),不允许悄悄开着上
+    // 线——启动就喊一声,日志里一目了然。
+    if config.dev_skip_totp {
+        tracing::warn!("dev_skip_totp = true: TOTP verification is DISABLED, any auth code is accepted");
+    }
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;

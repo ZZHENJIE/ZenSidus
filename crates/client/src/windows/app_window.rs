@@ -70,6 +70,14 @@ pub trait AppWindow: Render + Sized {
         serde_json::Value::Null
     }
 
+    /// Re-dump the dock layout (panels' `dump` payloads included) into the
+    /// window's persisted cache. Dock layouts auto-persist on
+    /// [`DockEvent::LayoutChanged`], but panel-level state changes (the chart
+    /// panel's symbol/timeframe, for instance) fire no such event — panels
+    /// call this through [`crate::windows::persist_window_dock`] after a
+    /// change. No-op for windows without a dock.
+    fn persist_dock_layout(&mut self, _cx: &mut Context<Self>) {}
+
     /// Open a window of this kind: activate the existing one when the kind
     /// is already open, otherwise restore remembered geometry and cache.
     fn open(cx: &mut App) {
@@ -121,11 +129,15 @@ pub trait AppWindow: Render + Sized {
             None::<gpui_kit::Entity<Self>>,
         ));
         let root_view_slot = root_view.clone();
+        let weak_view_slot: std::rc::Rc<std::cell::RefCell<Option<gpui_kit::WeakEntity<Self>>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let weak_view_for_persist = weak_view_slot.clone();
         let opened = cx.open_window(
             window_options(window_type, window_bounds, display_id),
             move |window, cx| {
                 let view = cx.new(|cx| Self::new(window, cx, window_type, cache));
                 *root_view_slot.borrow_mut() = Some(view.clone());
+                *weak_view_for_persist.borrow_mut() = Some(view.downgrade());
                 // The window root must be gpui-kit's `Root`: its overlay
                 // plugins (dialogs, notifications, tooltips) attach there,
                 // and `WindowExt::open_dialog` resolves them through
@@ -139,7 +151,14 @@ pub trait AppWindow: Render + Sized {
                     .borrow_mut()
                     .take()
                     .expect("window root view was built");
-                register_open_window(cx, window_type, handle.into(), root_view.into());
+                let weak_view = weak_view_slot
+                    .borrow_mut()
+                    .take()
+                    .expect("window view was built");
+                let persist: std::rc::Rc<dyn Fn(&mut App)> = std::rc::Rc::new(move |cx: &mut App| {
+                    let _ = weak_view.update(cx, |this, cx| this.persist_dock_layout(cx));
+                });
+                register_open_window(cx, window_type, handle.into(), root_view.into(), persist);
                 update_window_state(cx, window_type, |state| {
                     state.bounds = remembered_bounds;
                     state.maximized = maximized;

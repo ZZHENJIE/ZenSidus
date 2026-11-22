@@ -7,6 +7,11 @@ listen = "127.0.0.1:9720"
 # 生成(Git Bash):head -c 20 /dev/urandom | base32 | tr -d '='
 totp_secret = "JBSWY3DPEHPK3PXP"
 
+# 仅本地开发:跳过 TOTP 校验,客户端连接对话框里任意 6 位码都放行
+# (会话令牌逻辑不变)。默认 false;开启时启动与每次放行都打 warning。
+# 切勿在任何公网可达的部署配置里打开。
+#dev_skip_totp = true
+
 # tracing 过滤级别(RUST_LOG 语法)。
 log_level = "info"
 

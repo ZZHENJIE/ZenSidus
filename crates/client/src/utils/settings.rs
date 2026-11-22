@@ -385,7 +385,7 @@ mod tests {
         let keys = [
             "app.calendar.economic.time",
             "app.calendar.economic.empty",
-            "app.calendar.earnings.time",
+            "app.calendar.earnings.date",
             "app.calendar.earnings.empty",
             "app.calendar.ipo.company",
             "app.small_clock.alert",

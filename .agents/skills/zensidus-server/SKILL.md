@@ -50,6 +50,12 @@ server 回 `Welcome`(顺带对时 + **轮换下发新会话令牌**,旧令牌即
 server 侧 intern);推送 `Quote`/`Trade`/`Bar`/`News`;RPC 请求-响应按 id
 路由,`bars` 拉取过程发 `RestProgress` 进度帧。
 
+**Alpaca bars 端点缺 `start` 时返回空**(`200 + {"bars":{}}`),不是报错
+——客户端没传 start 的请求(Chart 面板默认)由 server 按 timeframe+limit
+推导起点并 `sort=desc` 单页取最新 limit 根(desc 第一页即最新,截断后翻
+回升序;继续翻页只会更旧,不发进度帧)。显式带 start/end 的请求维持
+`bars_all_with_progress` 分页语义。
+
 **改协议 = 改 protocol crate + client/server 两侧映射与测试**;protocol 是
 全 owned DTO + postcard 派生,别在两侧私自加字段或绕过它传私有格式。
 

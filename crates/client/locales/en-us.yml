@@ -101,6 +101,9 @@ app:
     failed: The screener request failed. See the message center for details
     no_data: The preset returned no data
     unnamed_column: "Column %{index}"
+    tab_table: Table
+    tab_chart: Chart
+    no_ticker: The preset has no Ticker column
 
   # ── 面板文案:Market Screener ────────────────────────────────────────
   market_screener:
@@ -133,7 +136,7 @@ app:
     time: Time
     price: Price
     size: Size
-    exchange: Exchange
+    exchange: MPID
     search_title: Search and switch the tape symbol
     no_symbol: Pick a symbol from the toolbar search
     not_connected: The server is not connected
@@ -141,13 +144,26 @@ app:
 
   # ── 面板文案:Quote(top of book)──────────────────────────────────────
   quote:
-    bid: Bid
-    ask: Ask
-    price: Price
-    size: Size
-    exchange: Exchange
     search_title: Search and switch the quote symbol
     no_symbol: Pick a symbol from the toolbar search
+    price: Price
+    size: Size
+    mpid: MPID
+
+  # ── 面板文案:Chart(K 线图)───────────────────────────────────────────
+  chart:
+    search_title: Search and switch the chart symbol
+    no_symbol: Pick a symbol from the toolbar search
+    no_data: No chart data for this symbol
+    not_connected: The server is not connected
+    waiting: Waiting for the first bar…
+    load_failed: Failed to load chart history
+    timeframe: Timeframe
+    tf_minute: "%{n} Minutes"
+    tf_hour: "%{n} Hours"
+    tf_day: 1 Day
+    tf_week: 1 Week
+    tf_month: 1 Month
 
   # ── 面板文案:日历族(calendar/{economic,earnings,ipo})──────────────
   calendar:
@@ -164,7 +180,7 @@ app:
     earnings:
       failed: Failed to fetch the earnings calendar
       pick_day: Pick a day
-      time: Time
+      date: Date
       symbol: Symbol
       company: Company
       market_cap: Market Cap
@@ -327,7 +343,6 @@ app:
   # ── 连接 Token 对话框(每次连接时输入,不落盘)─────────────────────────
   auth_code:
     title: Server auth code
-    placeholder: 6-digit code from your authenticator (expires in 30s)
   notify:
     search_failed: Search failed. Check your network.
     save_failed: Failed to save settings

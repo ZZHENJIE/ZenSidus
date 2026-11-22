@@ -1,10 +1,9 @@
 //! Earnings calendar rows from the Finviz Elite export, fetched through the
 //! app's Finviz client.
 
-use chrono::{NaiveDate, Utc};
+use chrono::NaiveDate;
 use gpui_kit::{
-    App, Context, Div, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Stateful,
-    Styled as _, Window,
+    App, Context, Div, Hsla, IntoElement, ParentElement as _, Styled as _, Window,
     component::{
         ActiveTheme as _,
         table::{Column, TableDelegate, TableState},
@@ -44,8 +43,8 @@ impl EarningsDelegate {
     /// headers on the next render.
     fn column(col_ix: usize) -> Column {
         match col_ix {
-            0 => Column::new("time", tr!("app.calendar.earnings.time"))
-                .width(110.)
+            0 => Column::new("date", tr!("app.calendar.earnings.date"))
+                .width(70.)
                 .resizable(false),
             1 => Column::new("symbol", tr!("app.calendar.earnings.symbol")).width(90.),
             2 => Column::new("company", tr!("app.calendar.earnings.company")).width(240.),
@@ -98,23 +97,6 @@ impl TableDelegate for EarningsDelegate {
         self.is_loading
     }
 
-    /// Rows that have not happened yet (timestamp is in the future) get a
-    /// subtle tinted row, matching the economic calendar.
-    fn render_tr(
-        &mut self,
-        row_ix: usize,
-        _window: &mut Window,
-        cx: &mut Context<TableState<Self>>,
-    ) -> Stateful<Div> {
-        let timestamp = self.data.get(row_ix).map(|row| row.time_ms);
-        match timestamp {
-            Some(timestamp) if timestamp > Utc::now().timestamp_millis() => {
-                datatable::tint_upcoming_row("earnings-row", row_ix, timestamp, cx)
-            }
-            _ => div().id(("earnings-row", row_ix)),
-        }
-    }
-
     fn render_loading(
         &mut self,
         _size: gpui_kit::component::Size,
@@ -144,7 +126,7 @@ impl TableDelegate for EarningsDelegate {
         let theme = cx.theme();
 
         match col_ix {
-            0 => datatable::format_ts_local(row.time_ms).into_any_element(),
+            0 => datatable::format_date_local(row.time_ms).into_any_element(),
             1 => row.symbol.clone().into_any_element(),
             2 => row.company.clone().into_any_element(),
             3 => tinted(millions(row.market_cap), None).into_any_element(),

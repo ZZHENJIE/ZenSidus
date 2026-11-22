@@ -16,6 +16,8 @@ path = "src/lib.rs"
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
+# 美东时区显示(K 线时间轴);server 侧已在用同一版本
+chrono-tz = "0.10"
 serde = { workspace = true }
 anysdk = { workspace = true }
 

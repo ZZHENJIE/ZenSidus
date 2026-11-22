@@ -101,6 +101,9 @@ app:
     failed: 筛选器请求失败,详情见消息中心
     no_data: 预设没有返回数据
     unnamed_column: "列 %{index}"
+    tab_table: 表格
+    tab_chart: K 线
+    no_ticker: 预设未包含 Ticker 列
 
   # ── 面板文案:Market Screener ────────────────────────────────────────
   market_screener:
@@ -133,7 +136,7 @@ app:
     time: 时间
     price: 成交价
     size: 数量
-    exchange: 交易所
+    exchange: MPID
     search_title: 搜索并切换逐笔标的
     no_symbol: 从工具栏搜索选择标的
     not_connected: 服务器行情流未连接
@@ -141,13 +144,26 @@ app:
 
   # ── 面板文案:Quote(单票行情)──────────────────────────────────────────
   quote:
-    bid: Bid
-    ask: Ask
-    price: 价格
-    size: 数量
-    exchange: 交易所
     search_title: 搜索并切换行情标的
     no_symbol: 从工具栏搜索选择标的
+    price: 价格
+    size: 数量
+    mpid: MPID
+
+  # ── 面板文案:Chart(K 线图)───────────────────────────────────────────
+  chart:
+    search_title: 搜索并切换图表标的
+    no_symbol: 从工具栏搜索选择标的
+    no_data: 该标的无K线数据
+    not_connected: 服务器行情流未连接
+    waiting: 等待第一根K线…
+    load_failed: 加载K线历史失败
+    timeframe: 时间周期
+    tf_minute: "%{n} 分钟"
+    tf_hour: "%{n} 小时"
+    tf_day: 1 天
+    tf_week: 1 周
+    tf_month: 1 月
 
   # ── 面板文案:日历族(calendar/{economic,earnings,ipo})──────────────
   calendar:
@@ -164,7 +180,7 @@ app:
     earnings:
       failed: 获取财报日历失败
       pick_day: 选择日期
-      time: 时间
+      date: 日期
       symbol: 股票代码
       company: 公司
       market_cap: 市值
@@ -327,7 +343,6 @@ app:
   # ── 连接 Token 对话框(每次连接时输入,不落盘)─────────────────────────
   auth_code:
     title: 服务器动态码
-    placeholder: 6 位动态码(认证器生成,30 秒内有效)
   notify:
     search_failed: 搜索失败,请检查网络
     save_failed: 设置保存失败

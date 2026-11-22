@@ -4,12 +4,14 @@
 
 pub mod calendar;
 pub mod news;
+pub mod quote;
 pub mod screener;
 pub mod trades;
 pub mod watchlist;
 
 pub use calendar::{EconomicDelegate, EarningsDelegate, IPODelegate};
 pub use news::{MarketNewsDelegate, StockNewsDelegate};
+pub use quote::{QuoteSide, QuoteSideDelegate};
 pub use screener::{ExchangeTableDelegate, StockScreenerDelegate};
 pub use trades::TradesDelegate;
 pub use watchlist::WatchlistDelegate;
@@ -162,6 +164,15 @@ pub fn empty_view(text: SharedString, cx: &App) -> impl IntoElement {
 pub fn format_ts_local(time_ms: i64) -> String {
     match chrono::Local.timestamp_millis_opt(time_ms) {
         chrono::LocalResult::Single(time) => time.format("%m-%d %H:%M").to_string(),
+        _ => String::new(),
+    }
+}
+
+/// A calendar row's date (epoch ms) in the viewer's local time (`MM-DD`),
+/// for tables that only show the day part.
+pub fn format_date_local(time_ms: i64) -> String {
+    match chrono::Local.timestamp_millis_opt(time_ms) {
+        chrono::LocalResult::Single(time) => time.format("%m-%d").to_string(),
         _ => String::new(),
     }
 }

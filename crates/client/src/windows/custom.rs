@@ -27,6 +27,10 @@ pub struct CustomWindow {
 }
 
 impl AppWindow for CustomWindow {
+    fn persist_dock_layout(&mut self, cx: &mut Context<Self>) {
+        DockWindow::persist_layout(self, cx);
+    }
+
     fn new(
         window: &mut Window,
         cx: &mut Context<Self>,

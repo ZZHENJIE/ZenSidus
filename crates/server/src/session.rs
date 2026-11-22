@@ -213,8 +213,13 @@ fn handle_frame(
 }
 
 /// 校验 TOTP 动态码:±1 窗口(±30s)容忍时钟偏差与输入耗时;密钥无效
-/// (配置错误)一律拒绝。
+/// (配置错误)一律拒绝。`dev_skip_totp = true` 时任意码放行(仅本地
+/// 开发用,启动与每次放行都打 warning)。
 fn verify_auth_code(config: &crate::config::Config, code: &str) -> bool {
+    if config.dev_skip_totp {
+        tracing::warn!("dev_skip_totp is enabled: accepting auth code without verification");
+        return true;
+    }
     let Ok(secret) = roka_totp::Secret::from_base32(&config.totp_secret) else {
         // 密钥本身不是合法 Base32(如混入 0/1/8/9 或小写未清洗):静默 false
         // 会让"所有连接被拒"无从排查,必须打到日志里。
@@ -252,8 +257,12 @@ mod tests {
     /// 本机回环:认证失败回 AuthFail 后断;正确动态码走 Hello→Welcome→
     /// Ping/Pong→Subscribe/Subscribed 全链路(不依赖真实上游)。
     async fn test_state(secret: &str) -> Arc<AppState> {
+        test_state_with(secret, false).await
+    }
+
+    async fn test_state_with(secret: &str, dev_skip_totp: bool) -> Arc<AppState> {
         let config: Config = toml::from_str(&format!(
-            "listen = '127.0.0.1:0'\ntotp_secret = '{secret}'\n[alpaca]\nkey_id = 'k'\nsecret = 's'\nfeed = 'iex'\n[finviz]\ntoken = 'f'\n[deepseek]\napi_key = 'd'"
+            "listen = '127.0.0.1:0'\ntotp_secret = '{secret}'\ndev_skip_totp = {dev_skip_totp}\n[alpaca]\nkey_id = 'k'\nsecret = 's'\nfeed = 'iex'\n[finviz]\ntoken = 'f'\n[deepseek]\napi_key = 'd'"
         ))
         .unwrap();
         let http = reqwest::Client::new();
@@ -271,6 +280,46 @@ mod tests {
             sessions: Mutex::new(HashMap::new()),
             next_client_id: AtomicU64::new(1),
         })
+    }
+
+    /// 回归:`dev_skip_totp = true`(本地开发开关)时,任意动态码都放行
+    /// 且走完整认证流程(注册扇出表、下发会话令牌)。
+    #[tokio::test]
+    async fn dev_skip_totp_accepts_any_code() {
+        let state = test_state_with(TEST_SECRET, true).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let observer = Arc::clone(&state);
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            crate::session::run(state, stream).await;
+        });
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let mut decoder = FrameDecoder::new();
+        let mut buf = [0u8; 4096];
+
+        let bytes = protocol::encode_frame(&Frame::Hello {
+            auth: HelloAuth::Totp("000000".into()),
+            app_version: "test".into(),
+        });
+        stream.write_all(&bytes).await.unwrap();
+        let n = stream.read(&mut buf).await.unwrap();
+        let frames = decoder.feed(&buf[..n]).unwrap();
+        let welcome_token = frames
+            .iter()
+            .find_map(|f| match f {
+                Frame::Welcome { session_token, .. } => Some(session_token),
+                _ => None,
+            })
+            .expect("dev_skip_totp must accept any code and issue a welcome");
+        assert!(!welcome_token.is_empty());
+        assert!(
+            !observer.clients.lock().unwrap().is_empty(),
+            "authenticated session must be registered for push fan-out"
+        );
+        assert!(frames.iter().all(|f| !matches!(f, Frame::AuthFail { .. })));
     }
 
     #[tokio::test]

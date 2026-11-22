@@ -12,6 +12,11 @@ pub struct Config {
     /// (20 字节正好 32 字符,无 padding)。客户端 `Hello.code` 携带当前
     /// 动态码,±1 窗口(±30s)内有效。
     pub totp_secret: String,
+    /// **仅本地开发**:跳过 TOTP 校验,任意动态码都放行(会话令牌逻辑
+    /// 不变)。默认 false;开启时启动与每次放行都会打 warning,切勿在
+    /// 任何有真实监听地址/公网转发(README 部署形态)的配置里打开。
+    #[serde(default)]
+    pub dev_skip_totp: bool,
     /// tracing 过滤级别(默认 `info`)。
     #[serde(default = "default_log_level")]
     pub log_level: String,

@@ -184,6 +184,7 @@ impl WatchlistPanel {
                 SymbolWish {
                     symbols: wanted,
                     trades: true,
+                    bars: false,
                     quotes: false,
                 },
             )

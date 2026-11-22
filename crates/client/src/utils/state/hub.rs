@@ -60,14 +60,18 @@ impl ServerStatus {
 }
 
 /// What one consumer wants from the shared stream: the symbols it follows,
-/// whether it needs the trades/daily-bars channels, and whether it needs
-/// top-of-book quotes. Both channels cost bandwidth — a consumer that only
-/// reads quotes (a whole-pool screener, for instance) must set `trades:
-/// false`, otherwise every followed symbol drags in a full trade firehose.
+/// whether it needs the trades/daily-bars channels, whether it needs the
+/// minute-bars channel, and whether it needs top-of-book quotes. All three
+/// channels cost bandwidth — a consumer that only reads quotes (a
+/// whole-pool screener, for instance) must set `trades: false`, otherwise
+/// every followed symbol drags in a full trade firehose.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SymbolWish {
     pub symbols: BTreeSet<String>,
     pub trades: bool,
+    /// Minute/updated-bars push (intraday chart live updates; high rate
+    /// during market hours — only charts on an intraday timeframe opt in).
+    pub bars: bool,
     pub quotes: bool,
 }
 
@@ -346,7 +350,7 @@ impl Hub {
         }
     }
 
-    /// Replace `subscriber`'s wanted symbols (and whether it wants quotes).
+    /// Replace `subscriber`'s wanted symbols (and which channels it wants).
     /// Only the symbols that enter or leave the unions go on the wire, so
     /// shared symbols stay subscribed until the last consumer lets go. An
     /// empty symbol set drops the subscriber. While disconnected this only
@@ -354,6 +358,7 @@ impl Hub {
     pub fn set_symbols(&mut self, subscriber: EntityId, wish: SymbolWish) {
         let before_trades = self.trades_union();
         let before_quotes = self.quotes_union();
+        let before_bars = self.bars_union();
         if wish.symbols.is_empty() {
             self.subscribers.remove(&subscriber);
         } else {
@@ -361,6 +366,7 @@ impl Hub {
         }
         let after_trades = self.trades_union();
         let after_quotes = self.quotes_union();
+        let after_bars = self.bars_union();
 
         let trades_added: Vec<String> =
             after_trades.difference(&before_trades).cloned().collect();
@@ -369,6 +375,8 @@ impl Hub {
         let quotes_added: Vec<String> = after_quotes.difference(&before_quotes).cloned().collect();
         let quotes_removed: Vec<String> =
             before_quotes.difference(&after_quotes).cloned().collect();
+        let bars_added: Vec<String> = after_bars.difference(&before_bars).cloned().collect();
+        let bars_removed: Vec<String> = before_bars.difference(&after_bars).cloned().collect();
 
         let Some(server) = self.server.as_ref() else {
             return;
@@ -385,6 +393,12 @@ impl Hub {
         if !quotes_removed.is_empty() {
             server.unsubscribe(quotes_removed, Channels::QUOTES);
         }
+        if !bars_added.is_empty() {
+            server.subscribe(bars_added, Channels::BARS);
+        }
+        if !bars_removed.is_empty() {
+            server.unsubscribe(bars_removed, Channels::BARS);
+        }
     }
 
     /// Re-send the full unions (first connect or reconnect replay).
@@ -394,11 +408,15 @@ impl Hub {
         };
         let trades: Vec<String> = self.trades_union().into_iter().collect();
         let quotes: Vec<String> = self.quotes_union().into_iter().collect();
+        let bars: Vec<String> = self.bars_union().into_iter().collect();
         if !trades.is_empty() {
             server.subscribe(trades, Channels::TRADES | Channels::DAILY);
         }
         if !quotes.is_empty() {
             server.subscribe(quotes, Channels::QUOTES);
+        }
+        if !bars.is_empty() {
+            server.subscribe(bars, Channels::BARS);
         }
     }
 
@@ -427,6 +445,16 @@ impl Hub {
         self.subscribers
             .values()
             .filter(|wish| wish.quotes)
+            .flat_map(|wish| wish.symbols.iter().cloned())
+            .collect()
+    }
+
+    /// Symbols of consumers that asked for minute bars: the bars-channel
+    /// union.
+    fn bars_union(&self) -> BTreeSet<String> {
+        self.subscribers
+            .values()
+            .filter(|wish| wish.bars)
             .flat_map(|wish| wish.symbols.iter().cloned())
             .collect()
     }

@@ -2,7 +2,6 @@
 //! opens the headline in the translate dialog; Ctrl + click opens the
 //! article URL.
 
-use protocol::NewsItem;
 use gpui_kit::{
     App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
     Stateful, StatefulInteractiveElement as _, Styled as _, Window,
@@ -12,6 +11,7 @@ use gpui_kit::{
     },
     div,
 };
+use protocol::NewsItem;
 
 use crate::tr;
 use crate::widgets::datatable::{self, Loadable};
@@ -40,7 +40,7 @@ impl StockNewsDelegate {
     fn column(col_ix: usize) -> Column {
         match col_ix {
             0 => Column::new("headline", tr!("app.stock_news.headline"))
-                .width(680.)
+                .width(480.)
                 .min_width(140.),
             1 => Column::new("source", tr!("app.stock_news.source"))
                 .width(88.)

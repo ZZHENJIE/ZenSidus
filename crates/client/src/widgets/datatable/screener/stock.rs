@@ -96,6 +96,25 @@ impl StockScreenerDelegate {
         self.is_loading = false;
     }
 
+    /// The export's Ticker column (by header), when the preset includes it —
+    /// gates the chart view.
+    pub fn ticker_column(&self) -> Option<usize> {
+        self.columns
+            .iter()
+            .position(|column| column.name == "Ticker")
+    }
+
+    /// The tickers of the result in row order; requires a Ticker column.
+    pub fn tickers(&self) -> Option<Vec<String>> {
+        let ix = self.ticker_column()?;
+        Some(
+            self.data
+                .iter()
+                .map(|row| row.get(ix).cloned().unwrap_or_default())
+                .collect(),
+        )
+    }
+
     fn columns(headers: &[String]) -> Vec<Column> {
         headers
             .iter()

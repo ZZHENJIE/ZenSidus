@@ -337,6 +337,7 @@ impl ETFLinkCalcWindow {
                 SymbolWish {
                     symbols,
                     trades: false,
+                    bars: false,
                     quotes: true,
                 },
             )

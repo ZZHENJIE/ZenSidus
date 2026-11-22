@@ -3,6 +3,7 @@
 
 pub mod datatable;
 pub mod dialog;
+pub mod kline;
 pub mod menu;
 pub mod picker;
 

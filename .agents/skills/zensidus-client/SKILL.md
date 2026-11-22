@@ -32,6 +32,33 @@ crates/client/src/
 ├── widgets/dialog/      # 跨窗口共用的对话框:open_*(window, cx, …) 入口(confirm 通用
 │                        # 确认 + dialog_footer / translate / search_symbol / screener_preset /
 │                        # auth_code 连接动态码,状态条 Popover 与设置页共用)
+├── widgets/kline/       # K 线图组件(纯自定义,chart 面板专用):state(KlineState
+│                        # 实体:bars/viewport/分钟桶聚合)、element(自定义 Element
+│                        # 三阶段绘制+指针交互)、scale(纯几何/刻度/美东标签,单测)。
+│                        # 历史走 Bars RPC,实时走 DailyBar(日线)/MinuteBar 聚合
+│                        # (分钟周期,SymbolWish.bars 意愿 → Channels::BARS)。
+│                        # ⚠ PaintQuad 的 BorderStyle::Dashed 在零高度/零宽度 bounds
+│                        # 上被剔除(边框几何依赖 bounds 面积)——虚线要自绘分段
+│                        # 实心 quad;Element::paint 里的 window.current_view()
+│                        # 合法,但鼠标回调(事件分发期)里调用会 panic,须在 paint
+│                        # 时捕获 view id 带入闭包。
+│                        # ⚠ 自绘图表的指针判定不要用 Hitbox::is_hovered:dock/悬浮
+│                        # 层场景下遮挡感知 hit-test 会瞬时报 false,把交互冻结在
+│                        # 旧位置(实测);用元素自身的 bounds.contains(事件坐标)
+│                        # 判定,事件驱动+cx.notify(view)。
+│                        # ⚠ 坐标语义要一刀切:交互 cell 若存"元素相对坐标"
+│                        # (e.position − bounds.origin),消费它的几何函数
+│                        # (ix_at/price_at 等)就必须以元素相对为基准;若几何
+│                        # 以窗口绝对为基准(内部减 bounds.origin),入口先加回
+│                        # origin。origin=(0,0) 的裸窗口会掩盖混用 bug,验证
+│                        # 必须用 origin≠0 的嵌套场景。
+│                        # ⚠ 自动化验证时用户的真实鼠标会与 SetCursorPos 竞争,
+│                        # 截图落点可能根本不是合成位置——以探针日志为准。
+│                        # ⚠ v_virtual_list:条目宽度按"测量条目 0"推断,卡片不带
+│                        # 显式 w_full 会退化成内容宽 → 里面的 K 线 plot_w=0 →
+│                        # paint_axes 的 clamp 区间反转 panic(min>max)。K 线元素
+│                        # 对退化尺寸(plot_w/h < 60)必须只画底色提前返回,
+│                        # clamp 的上界一律 .max(下界) 兜底。
 ├── widgets/picker.rs    # StringPicker:watchlist 分组 / screener preset 共用的单选 Combobox 壳
 ├── widgets/datatable/   # TableDelegate 实现,按族分目录(calendar/{economic,earnings,ipo}、
 │                        # news/{stock,market}、screener/stock、watchlist)= 面板的

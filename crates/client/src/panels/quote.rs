@@ -1,6 +1,7 @@
 //! Live quote panel: the top-of-book view of one followed symbol,
 //! persisted per panel instance. The symbol is picked through the search
-//! dialog; both sides of the spread are shown — price, size and exchange —
+//! dialog; both sides of the spread are shown as two three-column tables
+//! side by side — Bid on the left, Ask on the right (price / size / MPID) —
 //! straight from the shared Alpaca quote stream (this panel opts into
 //! quotes). A one-sided quote is legal (e.g. at the opening auction): the
 //! missing side renders as dashes.
@@ -9,11 +10,11 @@ use std::collections::BTreeSet;
 
 use anysdk::alpaca_stream::StockMessage;
 use gpui_kit::{
-    App, Context, Div, EntityId, EventEmitter, FocusHandle, Hsla, IntoElement, ParentElement as _,
+    App, Context, Entity, EntityId, EventEmitter, FocusHandle, IntoElement, ParentElement as _,
     Render, SharedString, Styled as _, Task, WeakEntity, Window,
     base::dock::{PanelEvent, PanelInfo, PanelState},
-    base::{h_flex, v_flex},
-    component::{ActiveTheme as _, button::Button},
+    base::h_flex,
+    component::button::Button,
     div,
 };
 
@@ -22,6 +23,8 @@ use crate::tr;
 use crate::utils::AppIcon;
 use crate::utils::state::stream_dispatch::{SharedSpec, StreamSpec, spawn_filter_stage};
 use crate::utils::state::{HubEvent, ServerStatus, AppState, SymbolWish};
+use crate::widgets::datatable::{self, QuoteSide, QuoteSideDelegate, table_render};
+use gpui_kit::component::table::TableState as DataTableState;
 use crate::widgets::dialog::open_search_symbol_dialog;
 use crate::widgets::icon_button;
 
@@ -50,19 +53,14 @@ impl Side {
     }
 }
 
-/// The full top of book of the followed symbol.
-#[derive(Clone, Default)]
-struct Quote {
-    bid: Side,
-    ask: Side,
-}
-
 pub struct QuotePanel {
     focus_handle: FocusHandle,
     /// The followed symbol (uppercased); `None` = nothing followed yet.
     symbol: Option<String>,
-    /// The latest top of book; `None` while no quote has arrived.
-    quote: Option<Quote>,
+    /// The two top-of-book tables — Bid on the left, Ask on the right —
+    /// sharing the same three-column structure.
+    bid_table: Entity<DataTableState<QuoteSideDelegate>>,
+    ask_table: Entity<DataTableState<QuoteSideDelegate>>,
     /// Whether this tab is the active one in its tab group. A hidden panel
     /// unsubscribes from the stream and resubscribes when shown again.
     active: bool,
@@ -80,7 +78,7 @@ impl Panel for QuotePanel {
     const ICON: AppIcon = AppIcon::Quote;
     const TITLE_KEY: &'static str = "app.panels.quote";
 
-    fn new(_window: &mut Window, cx: &mut Context<Self>, info: &serde_json::Value) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>, info: &serde_json::Value) -> Self {
         let symbol = info
             .get("symbol")
             .and_then(|value| value.as_str())
@@ -118,7 +116,12 @@ impl Panel for QuotePanel {
         let mut this = Self {
             focus_handle: cx.focus_handle(),
             symbol,
-            quote: None,
+            bid_table: datatable::new_table_state(cx, window, |_| {
+                QuoteSideDelegate::new(QuoteSide::Bid)
+            }),
+            ask_table: datatable::new_table_state(cx, window, |_| {
+                QuoteSideDelegate::new(QuoteSide::Ask)
+            }),
             active: true,
             subscriber,
             spec: SharedSpec::default(),
@@ -151,11 +154,6 @@ impl QuotePanel {
             quotes: true,
             ..Default::default()
         };
-        *self.spec.write().expect("spec lock poisoned") = StreamSpec {
-            symbols: wanted.clone(),
-            quotes: true,
-            ..Default::default()
-        };
         let hub = cx.global::<AppState>().hub.clone();
         hub.update(cx, |hub, _| {
             hub.set_symbols(
@@ -163,6 +161,7 @@ impl QuotePanel {
                 SymbolWish {
                     symbols: wanted,
                     trades: false,
+                    bars: false,
                     quotes: true,
                 },
             )
@@ -207,9 +206,19 @@ impl QuotePanel {
             if !quote.symbol.eq_ignore_ascii_case(symbol) {
                 continue;
             }
-            self.quote = Some(Quote {
-                bid: Side::take(quote.bid_price, quote.bid_size, &quote.bid_exchange),
-                ask: Side::take(quote.ask_price, quote.ask_size, &quote.ask_exchange),
+            let Side { price, size, exchange } =
+                Side::take(quote.bid_price, quote.bid_size, &quote.bid_exchange);
+            self.bid_table.update(cx, |table, cx| {
+                if table.delegate_mut().set_row(price, size, exchange) {
+                    cx.notify();
+                }
+            });
+            let Side { price, size, exchange } =
+                Side::take(quote.ask_price, quote.ask_size, &quote.ask_exchange);
+            self.ask_table.update(cx, |table, cx| {
+                if table.delegate_mut().set_row(price, size, exchange) {
+                    cx.notify();
+                }
             });
             applied = true;
         }
@@ -221,9 +230,16 @@ impl QuotePanel {
     /// Mirror the stream status into the top of book: with the stream down
     /// the last values are stale, and a quote view must not show them.
     fn set_connected(&mut self, connected: bool, cx: &mut Context<Self>) {
-        if !connected && self.quote.is_some() {
-            self.quote = None;
-            cx.notify();
+        if connected {
+            return;
+        }
+        // 清空两侧表格(最后值已过期),回退到空态破折号。
+        for table in [&self.bid_table, &self.ask_table] {
+            table.update(cx, |table, cx| {
+                if table.delegate_mut().set_row(None, None, None) {
+                    cx.notify();
+                }
+            });
         }
     }
 
@@ -234,135 +250,24 @@ impl QuotePanel {
             return;
         }
         self.symbol = Some(symbol);
-        self.quote = None;
+        self.set_connected(false, cx);
         self.sync_subscription(cx);
         cx.notify();
     }
 }
 
-/// A flat chip (native rectangle, no rounding) that scales with the window:
-/// every chip in a row takes an equal share of the available width, text
-/// centered. Same shape as the ETF link calculator's chips.
-fn pill(text: impl Into<SharedString>, bg: Hsla, fg: Hsla) -> Div {
-    div()
-        .flex()
-        .flex_1()
-        .justify_center()
-        .py_2()
-        .bg(bg)
-        .text_color(fg)
-        .text_sm()
-        .child(text.into())
-}
-
-/// A muted column label, same footprint as a chip.
-fn column_label(text: &str, cx: &Context<QuotePanel>) -> Div {
-    div()
-        .flex()
-        .flex_1()
-        .justify_center()
-        .py_2()
-        .text_xs()
-        .text_color(cx.theme().muted_foreground)
-        .child(text.to_string())
-}
-
-/// `1,234,567` — sizes read better grouped.
-fn format_size(size: i64) -> String {
-    let digits = size.abs().to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    if size < 0 {
-        out.insert(0, '-');
-    }
-    out
-}
-
 impl Render for QuotePanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(symbol) = &self.symbol else {
-            // Nothing followed: the toolbar search is the way in.
-            return div()
-                .size_full()
-                .flex()
-                .justify_center()
-                .items_center()
-                .child(
-                    div()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(tr!("app.quote.no_symbol")),
-                )
-                .into_any_element();
-        };
-        let quote = self.quote.clone().unwrap_or_default();
-        let theme = cx.theme();
-
-        // Header: the symbol chip followed by the three column labels.
-        let header = h_flex()
-            .items_center()
-            .gap_2()
-            .child(pill(
-                symbol.clone(),
-                theme.secondary,
-                theme.secondary_foreground,
-            ))
-            .child(column_label(&tr!("app.quote.price"), cx))
-            .child(column_label(&tr!("app.quote.size"), cx))
-            .child(column_label(&tr!("app.quote.exchange"), cx));
-
-        // One row per side of the spread: label, price, size, exchange. Bid
-        // takes the user's bullish color (red in the default theme), ask the
-        // bearish one — the same assignment as the quote rows everywhere. A
-        // missing side (one-sided quotes are legal) renders as dashes.
-        let side_row = |label: &str, side: &Side, price_bg: Hsla| {
-            let dash = || pill("—", theme.secondary, theme.secondary_foreground);
-            h_flex()
-                .items_center()
-                .gap_2()
-                .child(pill(label, theme.secondary, theme.secondary_foreground))
-                .child(match side.price {
-                    Some(price) => pill(format!("{price:.2}"), price_bg, theme.background),
-                    None => dash(),
-                })
-                .child(match side.size {
-                    Some(size) => pill(
-                        format_size(size),
-                        theme.secondary,
-                        theme.secondary_foreground,
-                    ),
-                    None => dash(),
-                })
-                .child(match &side.exchange {
-                    Some(exchange) => pill(
-                        exchange.clone(),
-                        theme.secondary,
-                        theme.secondary_foreground,
-                    ),
-                    None => dash(),
-                })
-        };
-
-        v_flex()
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        // Two three-column tables side by side — Bid on the left, Ask on the
+        // right — the standard quote-ladder arrangement. items_stretch:
+        // h_flex 默认交叉轴居中会让表格垂直悬浮,这里必须顶满。
+        h_flex()
             .size_full()
-            .justify_center()
-            .p_4()
-            .gap_3()
-            .child(header)
-            .child(side_row(
-                &tr!("app.quote.bid"),
-                &quote.bid,
-                theme.chart_bullish,
-            ))
-            .child(side_row(
-                &tr!("app.quote.ask"),
-                &quote.ask,
-                theme.chart_bearish,
-            ))
+            .items_stretch()
+            .gap_1()
+            .p_1()
+            .child(div().flex_1().child(table_render(&self.bid_table)))
+            .child(div().flex_1().child(table_render(&self.ask_table)))
             .into_any_element()
     }
 }

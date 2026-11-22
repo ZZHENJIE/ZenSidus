@@ -299,6 +299,7 @@ impl MarketScreenerPanel {
                 SymbolWish {
                     symbols: wanted,
                     trades: false,
+                    bars: false,
                     quotes: true,
                 },
             )
