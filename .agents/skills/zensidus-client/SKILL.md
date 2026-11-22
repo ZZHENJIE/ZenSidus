@@ -25,18 +25,28 @@ crates/client/src/
 │                        # 静态钩子 + default_title)+ PanelSpec 总表 all()(驱动注册与
 │                        # 菜单)+ open_in_center(按名走 PanelRegistry)+ fresh::<P>
 │                        # + refresh_button;宏已删除,面板全部手写
-├── panels/*.rs          # 面板本体(12 个,含 economic_calendar 经济日历;其中
-│                        # quote/trades/chart/experiment 为空壳占位):手写五件套
-│                        # 脚手架;数据在 DataEntity delegate。MarketNews = HTTP 回填
-│                        # + 面板自持 NewsStream(subscribe "*",泵随面板常驻)
+├── panels/*.rs          # 面板本体(12 个;quote 单票行情=Bid/Ask 双表、trades 逐笔
+│                        # 成交表(时间列在最后)、chart=K 线面板(kline 组件 +
+│                        # 周期下拉 + 持久化)、screener/stock=Table|Chart Tabs
+│                        # (Chart 为虚拟滚动 K 线列表);experiment 仍为占位):
+│                        # 手写五件套脚手架;数据在 DataEntity delegate。
+│                        # MarketNews = HTTP 回填 + 面板自持 NewsStream
+│                        # (subscribe "*",泵随面板常驻)
 ├── widgets/dialog/      # 跨窗口共用的对话框:open_*(window, cx, …) 入口(confirm 通用
 │                        # 确认 + dialog_footer / translate / search_symbol / screener_preset /
 │                        # auth_code 连接动态码,状态条 Popover 与设置页共用)
-├── widgets/kline/       # K 线图组件(纯自定义,chart 面板专用):state(KlineState
-│                        # 实体:bars/viewport/分钟桶聚合)、element(自定义 Element
-│                        # 三阶段绘制+指针交互)、scale(纯几何/刻度/美东标签,单测)。
-│                        # 历史走 Bars RPC,实时走 DailyBar(日线)/MinuteBar 聚合
-│                        # (分钟周期,SymbolWish.bars 意愿 → Channels::BARS)。
+├── widgets/kline/       # K 线图组件(纯自定义;chart 面板 + 筛选器 Chart 视图
+│                        # 共用):state(KlineState 实体:bars/viewport/分钟桶
+│                        # 聚合/日线聚合(周/月/年))、element(自定义 Element
+│                        # 三阶段绘制+指针交互;wheel_zoom 开关、with_id 多实例)、
+│                        # scale(纯几何/刻度/美东标签,单测)、mod 公共入口:
+│                        # load_history(Bars RPC,离线静默/代数防乱序)+
+│                        # timeframe_menu(扁平菜单,值后带单位词,单位切换处
+│                        # 分隔线)+ timeframe_item_label。周期 11 档:分
+│                        # 1/2/3/5/10/15/30、时 1/2/4、日/周/月(Alpaca 串透传)。
+│                        # 历史走 Bars RPC,实时走 DailyBar(日/周/月/年桶聚合)
+│                        # /MinuteBar 聚合(分钟周期,SymbolWish.bars 意愿 →
+│                        # Channels::BARS)。
 │                        # ⚠ PaintQuad 的 BorderStyle::Dashed 在零高度/零宽度 bounds
 │                        # 上被剔除(边框几何依赖 bounds 面积)——虚线要自绘分段
 │                        # 实心 quad;Element::paint 里的 window.current_view()
@@ -74,7 +84,7 @@ crates/client/src/
 ├── windows/main.rs      # 主窗口本体 + main/status_bar.rs(左:最新消息+历史 Popover;右:「服务器」label+连接色点,点击弹连接 Popover)
 │                        # + main/close_event.rs(X → 退出对话框:取消 / 不保存 / 保存)
 ├── windows/settings.rs  # 设置窗口(text_setting 助手)+ settings/ 五页
-│                        # general/alpaca/finviz/logs/small_clock
+│                        # general/server/market_screener/small_clock/logs
 ├── windows/custom.rs    # 自定义 dock 窗口(多开,center-only)
 ├── windows/small_clock.rs # 小时钟(单例,PopUp;网络时间走 AppState 的 tokio runtime)
 ├── windows/etf_linkcalc.rs # ETF 联价器(多开):symbols/当日开盘价/倍数/两偏移公式 +
@@ -278,6 +288,30 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
 - 布局操作:`panels::open_in_center(area, name, …)`(往 center 加 tab);
   默认布局用 `panels::fresh::<P>(window, cx)` 建实例;
   `DockWindow::reset_layout`(重建默认并落盘)
+- **面板状态变更要主动落盘**:dock 布局只在 `DockEvent::LayoutChanged` 时
+  dump,面板自身的状态变化(如图表的标的/周期)**不触发该事件**,退出路径
+  又只回写几何——状态变更处必须显式调
+  `windows::persist_window_dock(window.window_handle(), cx)`(registry 里每个
+  窗口带 persist 闭包 → `AppWindow::persist_dock_layout`,dock 窗口转发
+  `DockWindow::persist_layout` 整树重 dump)。**调用点必须 `cx.defer`**:
+  面板在自己的 update 里同步触发,dock dump 逐个 update 面板实体会撞上
+  "already being updated" 重入崩溃(实测)
+- **面板内的弹出选择器**(周期/开关类):`toolbar_buttons` 的 `Vec<Button>`
+  契约装不下弹出锚定元素——用 `title_suffix` 钩子承载(任意 IntoElement,
+  `Button::dropdown_menu(...)` 包一层即可),它渲染在标题栏工具区左侧
+- **同屏多个自绘元素必须各自显式元素 id**(`Kline::with_id`):默认 id 相同
+  时元素局部状态(光标/拖拽)跨实例互串
+- **嵌入可滚动列表的自绘元素关掉滚轮消费**(`Kline::wheel_zoom(false)`):
+  滚轮必须让位给列表滚动;列表本身要 `track_scroll(&handle)` + `flex_1().min_h_0()`
+  才会响应滚轮并限制视口高度
+- **股票筛选器 Chart 视图**(panels/screener/stock.rs):`v_virtual_list`
+  纵向列表,每项 260px(ticker 名 + K 线卡);回调只收到可见范围——渲染
+  按需,拉取也按需(`defer_in` 出帧后 `ensure_charts`:懒建
+  `KlineState::new(tf)` + `set_symbol(ticker)` + `kline::load_history`)。
+  卡片必须 `w_full`(虚拟列表条目宽度按"测量条目 0"推断,无显式宽度退化成
+  内容宽 → plot_w=0 → clamp panic,见 kline 条目);结果 header 无 Ticker 列
+  → Chart tab 不渲染并回落 Table;结果集/周期变化 → 清空全部图表状态重建;
+  bars 为空的卡显示 Spinner;离线创建的卡在连接建立后自动重拉(hub 订阅)
 
 ## 全局数据与消息
 
@@ -306,8 +340,9 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
 - **Hub**(utils/state/hub.rs,Entity 挂在 AppState;2026-11 起替代
   旧 AlpacaHub 直连 Alpaca WS):
   - 应用级唯一 server 连接(ServerClient,utils/server.rs);`set_symbols(EntityId,
-    SymbolWish)` 按订阅者记录意愿(symbols + 是否要 quotes),**只把并集的增减
-    发给 server**(trades 意愿 → TRADES|DAILY,quotes 意愿 → QUOTES)——两个面板
+    SymbolWish)` 按订阅者记录意愿(symbols + trades/quotes/bars 三档),**只把并集的增减
+    发给 server**(trades 意愿 → TRADES|DAILY,quotes 意愿 → QUOTES,bars 意愿 →
+    BARS=分钟/更新 bar;筛选器图表视图在分钟周期时置 bars)——两个面板
     同看 NVDA 只订一次
   - **订阅重放在 hub**:ServerClient 自己自动重连(指数退避)但不保存订阅意愿,
     hub 监听其 `status()` 广播,每次 `Connected`(首连与重连)重发两个并集;
@@ -318,7 +353,9 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
   - **staleness 看门狗保留**:数据流在流而最新交易所时间戳落后本地钟 >15s →
     `server.force_reconnect()` 换新路由(订阅经 Connected 重放)
   - 连接入口 = **启动自动弹出**(prompt_connect,地址已配置时)/ 状态条色点 Popover / 设置页按钮 → **动态码对话框**
-    (`widgets/dialog/auth_code.rs`,`hub.connect(code)`)——码不落盘、每次连接输
+    (`widgets/dialog/auth_code.rs`,`hub.connect(code)`)——**6 格 OtpInput**
+    (3+3 分组,只收数字;填满第 6 格经 `OtpEvent::Complete` 自动确认,
+    Confirm 只在填满时提交)——码不落盘、每次连接输
     认证器上的 6 位码。**认证成功后 Welcome 下发会话令牌**,ServerClient actor
     在内存里持有它:之后的断线重连自动带令牌(`HelloAuth::Session`)免输码,
     服务端轮换下发新令牌。令牌失效(服务端重启 / 30 分钟 TTL / 被轮换)时服务端

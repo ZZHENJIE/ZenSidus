@@ -15,18 +15,26 @@
 - **Dock 面板布局**:主窗口与自定义窗口均由可拖拽/停靠/持久化的 Panels 组成;
   面板布局(`DockAreaState`)直接存进所属窗口的 `cache`,每次布局变更即时落盘,
   崩溃也不丢;`Custom` 窗口只有中间停靠区(无左右 dock);布局版本号
-  (`DOCK_VERSION`)不匹配时自动回退到新默认布局
+  (`DOCK_VERSION`)不匹配时自动回退到新默认布局。面板自身的状态变化(如图表的
+  标的/周期)也会经 `persist_window_dock` 显式落盘
 - **面板总表**:12 个面板(自选/个股新闻/市场新闻/单票行情/逐笔成交/个股筛选器/市场筛选器/图表/经济日历/财报日历/IPO 日历/实验),
   `panels::all()` 一张表驱动注册;"Panels" 菜单按族分组为子菜单、族内条目用短标签;
   布局按 `Panel::NAME` 反序列化恢复,未知面板以占位形式保留并往返
+- **图表面板**:纯自定义 K 线组件(蜡烛+成交量+十字光标+价格/时间轴),11 档周期
+  下拉(值后带单位词),日线/周/月实时走日线推送聚合,分钟周期由分钟推送聚合;
+  标的与周期持久化
+- **股票筛选器**:Finviz 预设导出为表格;**Table | K 线 Tabs** 切换——K 线视图用
+  虚拟滚动列表按需渲染+按需拉取每个 Ticker 的图表(需结果包含 Ticker 列),
+  周期可切,静态历史
 - **工具窗口**:ETF 联价器(关联参数放对话框,窗口内 ETF 现价 ⇄ 指数价格正推/反推,
   参数与输入按实例记忆);小时钟(网络时间)
-- **数据接入**:Alpaca 行情(api key/secret/feed 配置化,`AlpacaHub` 应用级唯一推送流,
-  多面板同标的共享一条订阅,断线由流内置 supervisor 按指数退避(1s→60s 封顶)自动
-  重连并补发)+ Finviz 筛选器与经济日历(AnySDK 的 finviz_sdk,api key + 筛选
-  预设/周参数),配置持久化、兼容缺字段
-- **对话框**:代码联想搜索、翻译、筛选预设编辑、通用删除确认;均为 `open_*(window, cx, …)` 入口
-- **设置窗口**:通用(语言/主题)、Alpaca(凭据/行情源/连接)、Finviz(凭据/预设)、日志(按天查看)
+- **数据接入**:全部经自建 server(唯一对外 TCP 连接,可选 TLS;TOTP 动态码 +
+  会话令牌认证,断线自动重连):RPC = 筛选导出/经济·财报·IPO 日历/翻译/代码搜索/
+  历史 Bars/快照;推送 = Quote/Trade/Bar(分钟+日线)/News,多面板同标的共享一条
+  订阅(hub 并集聚合)
+- **对话框**:代码联想搜索、翻译、筛选预设编辑(含市场筛选器)、通用删除确认、
+  连接动态码(6 格 OtpInput,填满即确认);均为 `open_*(window, cx, …)` 入口
+- **设置窗口**:通用(语言/主题色)、服务器(连接/地址/TLS)、市场筛选器(交易所规则)、小时钟、日志(按天查看)
 - **国际化**:全部文案走 rust-i18n(zh-cn / en-us)
 - **主题**:Zen Sidus 设计令牌 → GPUI 主题(唯一允许原始色值的层),settings 可覆盖
 - **自绘标题栏**:空白区拖拽、Windows 原生窗口控制按钮、macOS 红绿灯
@@ -38,58 +46,65 @@
 | 依赖 | 用途 |
 |---|---|
 | [gpui-kit](https://gpui-kit.com) | GPUI 桌面框架 + 组件库 + dock 面板系统 + 内置图标 |
-| [anysdk](https://github.com/ZZHENJIE/AnySDK) | Alpaca 行情(HTTP + WebSocket 自愈流)与 Finviz Elite SDK(git 依赖) |
-| [gateway_sdk](../gateway_sdk/) | HTTP 数据接口网关(代码搜索、翻译、IPO 日历等) |
-| reqwest_client | gpui `HttpClient` 实现(统一 User-Agent) |
-| tokio | 常驻运行时(推送流指令发送、网络时间) |
+| [anysdk](https://github.com/ZZHENJIE/AnySDK) | Alpaca 行情/Finviz 数据的类型化形状(StockMessage 等,git 依赖) |
+| [protocol](../protocol/) | 客户端 ⇄ server 线协议(postcard 帧:认证/订阅/推送/RPC) |
+| tokio + rustls | 常驻运行时;到 server 的 TLS 连接 |
 | rust-embed | 图标/图片/音频资源编译期嵌入(回落框架内置资源) |
 | rust-i18n | 国际化(zh-cn / en-us) |
+| chrono + chrono-tz | 时间处理(K 线美东时区标签/桶对齐) |
 | rodio | 提示音播放 |
-
-AnySDK 与 gateway_sdk 的客户端都是纯 SDK(不绑定 HTTP 客户端):app 在
-`utils/executor.rs` 实现 `ReqwestExecutor`(AnySDK 的 `HttpExecutor`,唯一 reqwest
-落点)并定义 `AlpacaClient` / `FinvizClient` / `GatewayClient` 三个别名;Finviz
-日历行的加工在 `gateway_sdk`(`gateway_sdk::finviz`),GUI 只消费类型化结果。
 
 ## 项目结构
 
 ```
 src/
 ├── lib.rs                # i18n 注册 + bootstrap()(目录/日志/设置/locale)+ init_app()
-├── main.rs               # bootstrap → init_app → panels::init → windows::init → AlpacaHub::auto_connect
+├── main.rs               # bootstrap → init_app → panels::init → windows::init → prompt_connect
 ├── panels.rs             # Panel trait(NAME/ICON/TITLE_KEY + new(info) + refresh)+ 总表 all()
 │                         #   + open_in_center / fresh / refresh_button
 ├── panels/
 │   ├── calendar.rs       # 日历族入口:calendar/{economic,earnings,ipo,common}(共用件)
 │   ├── news.rs           # 新闻族入口:news/{stock,market}
-│   ├── screener.rs       # 筛选器族入口:screener/{stock,market}
+│   ├── screener.rs       # 筛选器族入口:screener/{stock(Table|Chart Tabs),market}
+│   ├── chart.rs          # 图表面板:K 线 + 周期下拉 + 持久化
+│   ├── quote.rs          # 单票行情:Bid/Ask 双表(Price/Size/MPID)
+│   ├── trades.rs         # 逐笔成交表(时间列在最后)
 │   └── watchlist.rs 等    # 其余面板各自一个文件,全部手写(无宏);数据在 widgets/datatable 的 delegate
 ├── widgets.rs            # 小元素助手(icon_button)+ 子模块声明
 ├── widgets/
-│   ├── datatable.rs      # 表格 delegate 入口 + Loadable/load_rows 等公共逻辑
-│   ├── dialog.rs         # 跨窗口共用对话框入口:confirm(+ dialog_footer)/ search_symbol / translate / screener_preset
+│   ├── datatable.rs      # 表格 delegate 入口 + Loadable/load_rows/时间格式等公共逻辑
+│   ├── datatable/        # 各表 delegate:trades / quote(单侧 Top of Book) /
+│   │   │                 #   watchlist / screener/{stock,market} / news/{stock,market} /
+│   │   │                 #   calendar/{economic,earnings,ipo}
+│   ├── kline/            # K 线图组件(纯自定义):state(KlineState/Timeframe)+
+│   │                     #   element(绘制+交互)+ scale(纯函数,单测);mod 含
+│   │                     #   load_history(Bars RPC)与周期选择菜单,面板共用
+│   ├── dialog.rs         # 跨窗口共用对话框入口:confirm(+ dialog_footer)/ search_symbol /
+│   │                     #   translate / screener_preset / market_preset / auth_code(OtpInput)
 │   ├── menu.rs           # 标题栏下拉菜单(app / panels / windows)与动作安装器
 │   └── picker.rs         # StringPicker:分组 / 预设共用的单选 Combobox 壳
 ├── windows.rs            # WindowType/WindowState/WindowRegistry + 持久化/启动恢复/退出前批量回写
 ├── windows/
 │   ├── app_window.rs     # AppWindow trait:open_instance(聚焦已开 / 恢复几何 / 根包 Root)
-│   │                     #   + close(持久化)+ 自绘标题栏与窗口控制按钮外壳
+│   │                     #   + persist_dock_layout + close(持久化)+ 自绘标题栏与窗口控制按钮外壳
 │   ├── dock_window.rs    # DockWindow trait:dock 创建/恢复/LayoutChanged 即时持久化 + reset_layout
 │   ├── main.rs           # 主窗口:菜单栏 + dock(watchlist 左 / chart 中 / stock_news 右)+ 状态栏 + 退出对话框
 │   ├── custom.rs         # 自定义窗口:仅中间区、可多开
-│   ├── settings.rs       # 设置窗口:通用 / Alpaca / Finviz / 日志 四页
+│   ├── settings.rs       # 设置窗口:通用 / 服务器 / 市场筛选器 / 小时钟 / 日志 五页
 │   ├── small_clock.rs    # 小时钟:网络时间(单例,PopUp)
 │   └── etf_linkcalc.rs   # ETF 联价器:窗口本体 + 窗口私有的参数对话框(可多开)
 ├── utils.rs              # app_dir(~/.zensidus)等公共工具 + tr! 宏(t! → SharedString)
 └── utils/
     ├── actions.rs        # 全局动作:OpenSettings/OpenDocs、Open* 窗口、OpenPanel { name }
-    ├── settings.rs       # Settings(语言/主题/Alpaca/Finviz/翻译/自选/窗口状态)持久化,
+    ├── exchanges.rs      # 美股交易所 MPID ⇄ 简称表(筛选器选择器/表格标题共用)
+    ├── settings.rs       # Settings(语言/主题/server/翻译/自选/窗口状态)持久化,
     │                     #   update_settings 是唯一落盘入口
     ├── theme.rs          # Zen Sidus 设计令牌 → GPUI 主题
-    ├── executor.rs       # ReqwestExecutor(AnySDK/gateway_sdk 的 HttpExecutor,唯一
-    │                     #   reqwest 落点)+ AlpacaClient/FinvizClient/GatewayClient 别名
-    ├── state.rs          # AppState 全局(设置 + 音频线程 + AlpacaHub + tokio runtime
-    │                     #   + 三个 SDK 客户端,启动时构建、改 key 经 sync_clients 即时重建)
+    ├── server.rs         # ServerClient:到 server 的唯一 TCP 连接(TLS/TOTP/会话令牌/
+    │                     #   RPC id 路由/推送广播/时钟估计)
+    ├── state.rs          # AppState 全局(设置 + 音频线程 + Hub + tokio runtime)
+    ├── state/            # hub.rs(订阅并集 + 重放 + staleness 看门狗)、
+    │                     #   stream_dispatch.rs(推送过滤阶段)、audio.rs
     ├── message.rs        # 有界消息日志全局(Info/Success/Warning/Error)
     ├── icons.rs          # AppIcon 图标接口(应用图标唯一来源)
     ├── assets.rs         # rust-embed 资源源(应用优先,回落框架内置)
@@ -113,7 +128,8 @@ src/
 
 `NAME` 是持久化布局中的标识,**一旦发布不可更改**。需要拉远程数据的面板把
 delegate 放 `widgets/datatable/`(日历/新闻/筛选器族的进对应族子目录并在族根声明)、
-实现 `Loadable`,`refresh` 里调 `load_rows`。
+实现 `Loadable`,`refresh` 里调 `load_rows`。面板状态(非布局)变更后要落盘时调
+`windows::persist_window_dock(window.window_handle(), cx)`(**必须 `cx.defer`**)。
 
 ### 新增窗口
 
@@ -148,7 +164,8 @@ SettingsWindow::open(cx);
 跨窗口共用的放 `widgets/dialog/x.rs`,写 `open_x_dialog(window, cx, …)` 并在
 `widgets/dialog.rs` 导出;只服务一个窗口的放该窗口目录下(如 `windows/etf_linkcalc/params_dialog.rs`)。
 输入实体在 `open_dialog` 之前创建,脚注用 `dialog_footer`,Enter 确认订阅
-`InputEvent::PressEnter`,宽度显式 `dialog.width(px(N))`。
+`InputEvent::PressEnter`(固定长度数字码用 `OtpInput`,填满即 `OtpEvent::Complete`),
+宽度显式 `dialog.width(px(N))`。
 
 ### 添加图标
 
@@ -178,6 +195,8 @@ SettingsWindow::open(cx);
   下沉到 `widgets/datatable/` 的 delegate
 - 布局状态属于窗口(`WindowState.cache`),不要另建持久化文件
 - 操作已打开的窗口一律 `cx.defer`(窗口自己的回调里 `handle.update` 自己会失败)
+- 数据访问只经 server 连接(RPC/推送),客户端不直接触 Alpaca/Finviz 凭据
 
 更多框架机制见 `.agents/skills/gpui-kit/`;本项目窗口/面板架构与实测陷阱
-(窗口重入、DOCK_VERSION、serde 兼容等)见 `.agents/skills/zensidus-client/`。
+(窗口重入、DOCK_VERSION、serde 兼容、自绘图表的坐标/裁剪/虚拟列表等)见
+`.agents/skills/zensidus-client/`。

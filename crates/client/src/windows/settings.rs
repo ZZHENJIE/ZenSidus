@@ -1,7 +1,7 @@
 //! The Settings window: a gpui-kit `Settings` shell with one page per
-//! submodule (general / alpaca / finviz / logs). Color pickers are created
-//! here and seeded from the persisted theme; a commit persists the hex and
-//! re-applies the theme tokens.
+//! submodule (general / server / market_screener / small_clock / logs).
+//! Color pickers are created here and seeded from the persisted theme; a
+//! commit persists the hex and re-applies the theme tokens.
 
 mod server;
 

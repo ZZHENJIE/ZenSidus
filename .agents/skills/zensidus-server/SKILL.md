@@ -91,7 +91,9 @@ server 侧 intern);推送 `Quote`/`Trade`/`Bar`/`News`;RPC 请求-响应按 id
 2. 认证 = TOTP:server.toml 持 `totp_secret`(Base32),客户端 Hello 携带
    认证器生成的 6 位码,无效/过期回 `AuthFail` 后断开;凭据(Alpaca/Finviz/
    DeepSeek)只存在于 server.toml,**永远不下发客户端**;动态码本身 30 秒过期、
-   重放窗口极窄,客户端不持密钥(见 zensidus-client)。
+   重放窗口极窄,客户端不持密钥(见 zensidus-client)。本地开发可设
+   `dev_skip_totp = true`(任意码放行,启动/放行打 warning,默认 false,
+   会话令牌逻辑不变)——**公网部署配置严禁开启**。
 3. web.rs 三个代理是从 TS Gateway worker 逐行移植的:改行为前先对照原逻辑
    (IPO 表第 6 列跳过、futunn `marketType == 2`、数值列容错 0 等)——测试
    锚定了这些行为,改了行为要同步改测试。
