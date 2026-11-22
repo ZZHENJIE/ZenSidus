@@ -19,7 +19,7 @@ pub struct Config {
     pub alpaca: AlpacaConfig,
     pub finviz: FinvizConfig,
     pub deepseek: DeepSeekConfig,
-    /// 可选出站代理(本机开发翻墙用;VPS 上通常不需要)。
+    /// 可选出站代理(本机开发用;VPS 上通常不需要)。
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
 }

@@ -147,13 +147,13 @@ fn render_message_area(scroll: &ScrollHandle, cx: &mut App) -> impl IntoElement 
         })
 }
 
-/// Severity dot for the current server connection. The dot alone: failed /
-/// connected already land in the message area on the left, so repeating the
-/// text here would be duplication — the tooltip carries the status label,
-/// with the upstream reason appended when the connection failed. Clicking
-/// opens the connection popover: live status, TCP latency (the heartbeat
-/// round-trip), the configured server address and the connect / disconnect
-/// actions (same semantics as the Server settings page).
+/// "服务器" label + severity dot for the current server connection. The
+/// tooltip carries the live status label, with the upstream reason appended
+/// when the connection failed (failed / connected events also land in the
+/// message area on the left). Clicking opens the connection popover: live
+/// status, TCP latency (the heartbeat round-trip), the configured server
+/// address and the connect / disconnect actions (same semantics as the
+/// Server settings page).
 fn render_connection_status(cx: &mut App) -> impl IntoElement {
     let status = cx.global::<AppState>().hub.read(cx).status().clone();
     let mut tooltip = status.label();
@@ -161,6 +161,7 @@ fn render_connection_status(cx: &mut App) -> impl IntoElement {
         tooltip = format!("{tooltip} — {reason}").into();
     }
     let trigger = Button::new("connection-status")
+        .label(tr!("app.settings.server"))
         .ghost()
         .xsmall()
         .child(div().size(px(6.)).rounded_full().bg(status.color(cx)))
@@ -223,16 +224,11 @@ fn render_connection_status(cx: &mut App) -> impl IntoElement {
                                 .text_color(cx.theme().muted_foreground)
                                 .child(tr!("app.settings.server_addr")),
                         )
-                        .child(
-                            div()
-                                .max_w(px(180.))
-                                .truncate()
-                                .child(if addr.is_empty() {
-                                    SharedString::from("—")
-                                } else {
-                                    addr.into()
-                                }),
-                        ),
+                        .child(div().max_w(px(180.)).truncate().child(if addr.is_empty() {
+                            SharedString::from("—")
+                        } else {
+                            addr.into()
+                        })),
                 )
                 // Connect / disconnect, same semantics as the settings page.
                 .child(

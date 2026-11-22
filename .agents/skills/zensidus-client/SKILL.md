@@ -44,7 +44,7 @@ crates/client/src/
 ├── windows/app_window.rs# AppWindow trait:open_instance 里窗口根包 gpui-kit Root;
 │                        # render_titlebar_left/right 钩子(右侧可放窗口级按钮)
 ├── windows/dock_window.rs # DockWindow trait:dock 创建/恢复/LayoutChanged 即时落盘
-├── windows/main.rs      # 主窗口本体 + main/status_bar.rs(左:最新消息+历史 Popover;右:连接色点,点击弹连接 Popover)
+├── windows/main.rs      # 主窗口本体 + main/status_bar.rs(左:最新消息+历史 Popover;右:「服务器」label+连接色点,点击弹连接 Popover)
 │                        # + main/close_event.rs(X → 退出对话框:取消 / 不保存 / 保存)
 ├── windows/settings.rs  # 设置窗口(text_setting 助手)+ settings/ 五页
 │                        # general/alpaca/finviz/logs/small_clock
@@ -300,7 +300,8 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
     构建失败则 hub 报 Failed 不 panic),hub 只存 Handle
 - **状态栏**(windows/main/status_bar.rs):左 = 最新消息(级别色点 + 截断文本 +
   muted 时间;点击 Popover 历史 + Clear;无消息完全空白);右 = server 连接状态
-  **只剩色点**(文字在 tooltip——文字已在左侧消息区,重复显示是用户明确的雷),
+  **「服务器」label + 色点**(label 复用 `app.settings.server`;状态文字在
+  tooltip——曾按"色点 only"约定做过,2026-11-20 用户明确要求恢复 label),
   **点击弹连接 Popover**(状态行 + TCP 延迟 = 心跳 RTT,无样本显示 "—";服务器
   地址 = settings.server.addr;连接/断开按钮与设置页同语义 `hub.connect/disconnect`;
   latency 值随窗口重绘刷新,无独立定时器)
