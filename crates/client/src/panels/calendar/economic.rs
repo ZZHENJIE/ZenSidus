@@ -2,7 +2,6 @@
 //! for the current week or a week picked in the date picker (Mondays only).
 
 use chrono::{Datelike, NaiveDate};
-use protocol::{RpcRequestPayload, RpcResponsePayload};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, IntoElement,
     ParentElement as _, Render, Styled, WeakEntity, Window,
@@ -113,17 +112,7 @@ impl EconomicCalendarPanel {
         datatable::load_rows(
             table,
             tr!("app.calendar.economic.failed"),
-            move |server| async move {
-                match server
-                    .rpc_checked(RpcRequestPayload::EconomicCalendar {
-                        date: date.to_string(),
-                    })
-                    .await?
-                {
-                    RpcResponsePayload::EconomicCalendar(rows) => Ok(rows),
-                    other => Err(anyhow::anyhow!("unexpected rpc response: {other:?}")),
-                }
-            },
+            move |server| async move { crate::data::api::calendar::economic(&server, date).await },
             cx,
         );
     }

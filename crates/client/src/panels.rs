@@ -14,7 +14,7 @@ pub mod screener;
 pub mod trades;
 pub mod watchlist;
 
-pub use calendar::{EconomicCalendarPanel, EarningsCalendarPanel, IPOCalendarPanel};
+pub use calendar::{EarningsCalendarPanel, EconomicCalendarPanel, IPOCalendarPanel};
 pub use chart::ChartPanel;
 pub use experiment::ExperimentPanel;
 pub use news::{MarketNewsPanel, StockNewsPanel};
@@ -142,7 +142,10 @@ pub fn open_in_center(
     let info = PanelInfo::Panel(serde_json::Value::Null);
     let context = PanelBuildContext::new(cx.weak_entity(), &state, &info);
     let Some(panel) = PanelRegistry::build_panel(name, context, window, cx) else {
-        tracing::error!("{}", tr!("app.log.panel_not_registered", name = format!("{name:?}")));
+        tracing::error!(
+            "{}",
+            tr!("app.log.panel_not_registered", name = format!("{name:?}"))
+        );
         return;
     };
 

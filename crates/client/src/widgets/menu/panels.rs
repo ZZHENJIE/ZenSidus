@@ -19,8 +19,8 @@ use gpui_kit::{
 
 use crate::{
     panels::{
-        ChartPanel, EarningsCalendarPanel, EconomicCalendarPanel, ExperimentPanel, IPOCalendarPanel,
-        MarketNewsPanel, MarketScreenerPanel, Panel, QuotePanel, StockNewsPanel,
+        ChartPanel, EarningsCalendarPanel, EconomicCalendarPanel, ExperimentPanel,
+        IPOCalendarPanel, MarketNewsPanel, MarketScreenerPanel, Panel, QuotePanel, StockNewsPanel,
         StockScreenerPanel, TradesPanel, WatchlistPanel, open_in_center,
     },
     tr,
@@ -92,9 +92,11 @@ pub fn actions<T: DockWindow + 'static, E: IntoElement + InteractiveElement>(
     div: E,
     cx: &mut gpui_kit::Context<T>,
 ) -> E {
-    div.on_action(cx.listener(|this, action: &actions::OpenPanel, window, cx| {
-        this.dock_area().update(cx, |area, cx| {
-            open_in_center(area, &action.name, window, cx);
-        });
-    }))
+    div.on_action(
+        cx.listener(|this, action: &actions::OpenPanel, window, cx| {
+            this.dock_area().update(cx, |area, cx| {
+                open_in_center(area, &action.name, window, cx);
+            });
+        }),
+    )
 }

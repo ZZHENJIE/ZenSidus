@@ -14,21 +14,20 @@ use std::collections::BTreeSet;
 use anysdk::alpaca_stream::StockMessage;
 use anysdk::alpaca_stream::stocks::BarMessage;
 use chrono::NaiveDate;
-use protocol::{RpcRequestPayload, RpcResponsePayload};
 use gpui_kit::{
-    App, Context, Div, EntityId, Hsla, IntoElement, ParentElement as _, Render, SharedString,
-    Styled as _, Task, Window,
+    App, Context, Div, Hsla, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
+    Window,
     base::{h_flex, v_flex},
     component::{ActiveTheme as _, input::InputState},
     div,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
 
 use crate::{
+    data::stream::{StreamConsumer, StreamHandle, Wish},
     tr,
     utils::AppIcon,
-    utils::state::{HubEvent, ServerStatus, AppState, SymbolWish},
+    utils::state::ServerStatus,
     widgets::icon_button,
     windows::{AppWindow, WindowType, hook_should_close},
 };
@@ -151,16 +150,39 @@ pub struct ETFLinkCalcWindow {
     /// The trading days the opening prices were last anchored for.
     index_open_date: Option<NaiveDate>,
     etf_open_date: Option<NaiveDate>,
-    /// This window's id in the hub's subscriber table.
-    subscriber: EntityId,
     /// Live top-of-book quotes; `None` per side while no quote has arrived
     /// (a one-sided quote is legal, e.g. at the opening auction).
     index_bid: Option<f64>,
     index_ask: Option<f64>,
     etf_bid: Option<f64>,
     etf_ask: Option<f64>,
-    /// Live message pump for the current connection.
-    pump: Option<Task<()>>,
+    /// The window's stream subscription (wish, filter, pump, lifecycle).
+    stream: StreamHandle<Self>,
+}
+
+impl StreamConsumer for ETFLinkCalcWindow {
+    const STAGE: &'static str = "etf-linkcalc";
+
+    fn stream_handle(&mut self) -> &mut StreamHandle<Self> {
+        &mut self.stream
+    }
+
+    /// Connection status mirrors into the quotes: with the stream down the
+    /// last values are stale and the chips must not show them; a fresh
+    /// connect re-anchors the opens (the startup snapshot fetch was skipped
+    /// silently while offline).
+    fn on_status(&mut self, status: &ServerStatus, cx: &mut Context<Self>) {
+        match status {
+            ServerStatus::Connected => self.fetch_opens(cx),
+            _ => self.drop_quotes(cx),
+        }
+    }
+
+    fn apply_batch(&mut self, messages: Vec<StockMessage>, cx: &mut Context<Self>) {
+        for message in messages {
+            self.apply_message(message, cx);
+        }
+    }
 }
 
 impl AppWindow for ETFLinkCalcWindow {
@@ -174,49 +196,20 @@ impl AppWindow for ETFLinkCalcWindow {
 
         let cache: Cache = serde_json::from_value(cache).unwrap_or_default();
 
-        let hub = cx.global::<AppState>().hub.clone();
-
-        // Connection status drives the message pump: connected attaches a
-        // fresh broadcast receiver, any other status cancels it and drops
-        // the quotes (the last values are stale by then).
-        cx.subscribe(&hub, |this, hub, _: &HubEvent, cx| {
-            match hub.read(cx).status() {
-                ServerStatus::Connected => {
-                    this.refresh_pump(cx);
-                    // The startup snapshot fetch is skipped silently while
-                    // offline; anchor the opens now that the route is up.
-                    this.fetch_opens(cx);
-                }
-                _ => this.drop_quotes(cx),
-            }
-        })
-        .detach();
-
-        // Release the stream subscription no matter how this window dies.
-        let subscriber = cx.entity_id();
-        let release_hub = hub.clone();
-        cx.on_release(move |_, cx| {
-            release_hub.update(cx, |hub, _| {
-                hub.set_symbols(subscriber, SymbolWish::default())
-            });
-        })
-        .detach();
-
         let mut this = Self {
             id: window_type.instance_id().unwrap_or(0),
             params: cache.params,
             index_open_date: cache.index_open_date,
             etf_open_date: cache.etf_open_date,
-            subscriber,
             index_bid: None,
             index_ask: None,
             etf_bid: None,
             etf_ask: None,
-            pump: None,
+            stream: StreamHandle::new(cx),
         };
         this.sync_subscription(cx);
         // The stream may already be up: the window can open after connect.
-        this.refresh_pump(cx);
+        this.stream.attach_pump(cx);
         // The daily bars anchoring the opens may sit anywhere between the
         // last session and mid-formation: pull a snapshot once up front so
         // the breaks work from the first frame instead of waiting for the
@@ -329,63 +322,14 @@ impl ETFLinkCalcWindow {
             .filter(|symbol| !symbol.is_empty())
             .map(|symbol| symbol.to_ascii_uppercase())
             .collect();
-        let subscriber = self.subscriber;
-        let hub = cx.global::<AppState>().hub.clone();
-        hub.update(cx, |hub, _| {
-            hub.set_symbols(
-                subscriber,
-                SymbolWish {
-                    symbols,
-                    trades: false,
-                    bars: false,
-                    quotes: true,
-                },
-            )
-        });
-    }
-
-    /// (Re)attach the broadcast-receiver pump: one receiver of the hub's
-    /// stream, filtered for this window's two symbols.
-    fn refresh_pump(&mut self, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().hub.clone();
-        let Some(rx) = hub.read(cx).stock_messages() else {
-            return;
-        };
-        self.pump = Some(cx.spawn(async move |this, cx| {
-            let mut rx = rx;
-            loop {
-                match rx.recv().await {
-                    Ok(first) => {
-                        // Drain the queued rest: one entity update per batch
-                        // keeps the main thread cheap while other panels'
-                        // high-rate subscriptions fill the channel.
-                        let mut batch = vec![first];
-                        while let Ok(message) = rx.try_recv() {
-                            batch.push(message);
-                        }
-                        if this
-                            .update(cx, |this, cx| {
-                                for message in batch {
-                                    this.apply_message(message, cx);
-                                }
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    // A brief data gap only momentarily stales the chips:
-                    // a utility window stays quiet in the message center.
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        tracing::warn!(
-                            "{}",
-                            tr!("app.log.missed_stream_messages", count = skipped)
-                        );
-                    }
-                    Err(_) => break,
-                }
-            }
-        }));
+        self.stream.set_wish(
+            Wish {
+                symbols,
+                quotes: true,
+                ..Default::default()
+            },
+            cx,
+        );
     }
 
     fn apply_message(&mut self, message: StockMessage, cx: &mut Context<Self>) {
@@ -477,19 +421,13 @@ impl ETFLinkCalcWindow {
         if symbols.is_empty() {
             return;
         }
-        let Ok(server) = AppState::server(cx) else {
+        let Ok(server) = crate::utils::state::AppState::server(cx) else {
             return;
         };
         cx.spawn(async move |this, cx| {
-            let Ok(response) = server
-                .rpc_checked(RpcRequestPayload::Snapshot {
-                    symbols: symbols.clone(),
-                })
-                .await
+            let Ok(snapshots) =
+                crate::data::api::snapshot::for_symbols(&server, symbols.clone()).await
             else {
-                return;
-            };
-            let RpcResponsePayload::Snapshot(snapshots) = response else {
                 return;
             };
             let _ = this.update(cx, |this, cx| {
@@ -515,10 +453,10 @@ impl ETFLinkCalcWindow {
         .detach();
     }
 
-    /// Detach the pump and clear the quotes: with the stream down the last
-    /// values are stale, and a trading tool must not show stale prices.
+    /// Clear the quotes: with the stream down the last values are stale,
+    /// and a trading tool must not show stale prices. (The pump follows the
+    /// status in the data layer's handle.)
     fn drop_quotes(&mut self, cx: &mut Context<Self>) {
-        self.pump = None;
         self.index_bid = None;
         self.index_ask = None;
         self.etf_bid = None;

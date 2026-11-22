@@ -9,8 +9,8 @@ pub mod exchanges;
 pub mod icons;
 pub mod logging;
 pub mod message;
-pub mod settings;
 pub mod server;
+pub mod settings;
 pub mod state;
 pub mod theme;
 

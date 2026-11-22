@@ -35,7 +35,7 @@ tracing = { workspace = true }
 tracing-appender = "0.2.5"
 tracing-subscriber = { workspace = true }
 
-gpui-kit = { version = "0.9.1", features = ["gpui-fast"] }
+gpui-kit = { version = "0.10.0", features = ["gpui-fast"] }
 rust-embed = { version = "8.13.0", features = ["debug-embed"] }
 rust-i18n = "4.2.4"
 directories = "6.0.0"

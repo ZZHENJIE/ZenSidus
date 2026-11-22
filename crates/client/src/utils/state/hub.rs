@@ -368,8 +368,7 @@ impl Hub {
         let after_quotes = self.quotes_union();
         let after_bars = self.bars_union();
 
-        let trades_added: Vec<String> =
-            after_trades.difference(&before_trades).cloned().collect();
+        let trades_added: Vec<String> = after_trades.difference(&before_trades).cloned().collect();
         let trades_removed: Vec<String> =
             before_trades.difference(&after_trades).cloned().collect();
         let quotes_added: Vec<String> = after_quotes.difference(&before_quotes).cloned().collect();

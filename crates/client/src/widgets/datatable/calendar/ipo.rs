@@ -6,21 +6,20 @@ use gpui_kit::{
 };
 
 use crate::tr;
-use crate::widgets::datatable::{self, Loadable};
+use crate::widgets::datatable::{self, DataPage, Loadable};
 
 #[derive(Clone)]
 pub struct IPODelegate {
-    pub(crate) data: Vec<protocol::IpoItem>,
-    pub(crate) is_loading: bool,
-    fetch_generation: u64,
+    page: DataPage<crate::data::api::IpoItem>,
 }
 
 impl IPODelegate {
-    pub fn new(data: Vec<protocol::IpoItem>) -> Self {
+    pub fn new(data: Vec<crate::data::api::IpoItem>) -> Self {
         Self {
-            data,
-            is_loading: false,
-            fetch_generation: 0,
+            page: DataPage {
+                rows: data,
+                ..Default::default()
+            },
         }
     }
 
@@ -51,18 +50,10 @@ impl IPODelegate {
 }
 
 impl Loadable for IPODelegate {
-    type Row = protocol::IpoItem;
+    type Row = crate::data::api::IpoItem;
 
-    fn loading_mut(&mut self) -> &mut bool {
-        &mut self.is_loading
-    }
-
-    fn rows_mut(&mut self) -> &mut Vec<Self::Row> {
-        &mut self.data
-    }
-
-    fn fetch_generation_mut(&mut self) -> &mut u64 {
-        &mut self.fetch_generation
+    fn page_mut(&mut self) -> &mut DataPage<Self::Row> {
+        &mut self.page
     }
 }
 
@@ -72,7 +63,7 @@ impl TableDelegate for IPODelegate {
     }
 
     fn rows_count(&self, _: &App) -> usize {
-        self.data.len()
+        self.page.rows.len()
     }
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
@@ -80,7 +71,7 @@ impl TableDelegate for IPODelegate {
     }
 
     fn loading(&self, _cx: &App) -> bool {
-        self.is_loading
+        self.page.is_loading
     }
 
     fn render_loading(
@@ -108,7 +99,7 @@ impl TableDelegate for IPODelegate {
         _: &mut Window,
         _: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let row = &self.data[row_ix];
+        let row = &self.page.rows[row_ix];
 
         match col_ix {
             0 => row.company.to_string(),

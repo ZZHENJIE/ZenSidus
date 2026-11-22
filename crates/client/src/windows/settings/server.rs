@@ -15,7 +15,7 @@ use gpui_kit::{
 };
 
 use crate::tr;
-use crate::utils::state::{ServerStatus, AppState};
+use crate::utils::state::{AppState, ServerStatus};
 use crate::utils::{AppIcon, settings};
 use crate::widgets::dialog::open_auth_code_dialog;
 use crate::windows::settings::{SettingsWindow, text_setting};
@@ -64,9 +64,7 @@ fn server_actions_item() -> SettingItem {
                     // re-reads address/TLS from the settings itself.
                     open_auth_code_dialog(window, cx, {
                         let hub = hub.clone();
-                        move |code, cx| {
-                            hub.update(cx, |hub, cx| hub.connect(code.to_string(), cx))
-                        }
+                        move |code, cx| hub.update(cx, |hub, cx| hub.connect(code.to_string(), cx))
                     });
                 })
         };

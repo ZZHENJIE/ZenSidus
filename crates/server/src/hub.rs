@@ -39,7 +39,8 @@ pub(crate) fn subscription_is_empty(subscription: &StockSubscription) -> bool {
 
 #[derive(Debug, Default)]
 pub struct SubscriptionHub {
-    /// client_id → (symbol → channels)。
+    /// client_id → (symbol → channels)。符号键统一大写(行情帧符号全
+    /// 大写;客户端订阅串大小写容错,入库归一让路由查表 O(1))。
     wishes: HashMap<u64, HashMap<String, Channels>>,
     /// 已发给上游的并集镜像(diff 的基准)。
     upstream: HashMap<String, Channels>,
@@ -87,7 +88,8 @@ impl SubscriptionHub {
         Self::default()
     }
 
-    /// 客户端增量订阅:symbols 的通道位累加进该 client 的意愿。
+    /// 客户端增量订阅:symbols 的通道位累加进该 client 的意愿(符号键
+    /// 归一大写)。
     pub fn apply_subscribe(
         &mut self,
         client_id: u64,
@@ -96,7 +98,9 @@ impl SubscriptionHub {
     ) -> HubDiff {
         let wish = self.wishes.entry(client_id).or_default();
         for symbol in symbols {
-            let bits = wish.entry(symbol.clone()).or_insert(Channels::empty());
+            let bits = wish
+                .entry(symbol.to_ascii_uppercase())
+                .or_insert(Channels::empty());
             *bits |= channels;
         }
         self.diff()
@@ -111,10 +115,11 @@ impl SubscriptionHub {
     ) -> HubDiff {
         if let Some(wish) = self.wishes.get_mut(&client_id) {
             for symbol in symbols {
-                if let Some(bits) = wish.get_mut(symbol) {
+                let key = symbol.to_ascii_uppercase();
+                if let Some(bits) = wish.get_mut(key.as_str()) {
                     *bits &= !channels;
                     if bits.is_empty() {
-                        wish.remove(symbol);
+                        wish.remove(key.as_str());
                     }
                 }
             }
@@ -123,6 +128,15 @@ impl SubscriptionHub {
             }
         }
         self.diff()
+    }
+
+    /// 路由判定(fan_out 纯分发用):该客户端在该符号上是否有任一指定
+    /// 通道位。符号大小写不敏感(入库已归一大写,查表入参同样归一)。
+    pub fn subscribed(&self, client_id: u64, symbol: &str, channels: Channels) -> bool {
+        self.wishes
+            .get(&client_id)
+            .and_then(|wish| wish.get(symbol.to_ascii_uppercase().as_str()))
+            .is_some_and(|bits| bits.intersects(channels))
     }
 
     /// 客户端断开:撤销其全部意愿。
@@ -187,7 +201,8 @@ mod tests {
         assert_eq!(diff.subscribe.daily_bars, ["AAPL"]);
         assert!(subscription_is_empty(&diff.unsubscribe));
 
-        let diff = hub.apply_unsubscribe(1, &symbols(&["AAPL"]), Channels::TRADES | Channels::DAILY);
+        let diff =
+            hub.apply_unsubscribe(1, &symbols(&["AAPL"]), Channels::TRADES | Channels::DAILY);
         assert_eq!(diff.unsubscribe.trades, ["AAPL"]);
         assert_eq!(diff.unsubscribe.daily_bars, ["AAPL"]);
         assert!(subscription_is_empty(&diff.subscribe));
@@ -203,7 +218,10 @@ mod tests {
         assert!(diff.is_empty(), "second subscriber adds nothing upstream");
 
         let diff = hub.remove_client(1);
-        assert!(diff.is_empty(), "client 1 leaving changes nothing: 2 still wants NVDA");
+        assert!(
+            diff.is_empty(),
+            "client 1 leaving changes nothing: 2 still wants NVDA"
+        );
 
         let diff = hub.remove_client(2);
         assert_eq!(diff.unsubscribe.trades, ["NVDA"]);
@@ -223,11 +241,18 @@ mod tests {
         assert_eq!(diff.subscribe.bars, ["TSLA"]);
         assert_eq!(diff.subscribe.updated_bars, ["TSLA"]);
 
-        let diff = hub.apply_unsubscribe(2, &symbols(&["TSLA"]), Channels::QUOTES | Channels::BARS | Channels::DAILY);
+        let diff = hub.apply_unsubscribe(
+            2,
+            &symbols(&["TSLA"]),
+            Channels::QUOTES | Channels::BARS | Channels::DAILY,
+        );
         assert_eq!(diff.unsubscribe.quotes, ["TSLA"]);
         assert_eq!(diff.unsubscribe.bars, ["TSLA"]);
         assert_eq!(diff.unsubscribe.updated_bars, ["TSLA"]);
-        assert!(diff.unsubscribe.trades.is_empty(), "client 1 still wants trades");
+        assert!(
+            diff.unsubscribe.trades.is_empty(),
+            "client 1 still wants trades"
+        );
         assert!(hub.upstream()["TSLA"].contains(Channels::TRADES));
     }
 
@@ -249,5 +274,30 @@ mod tests {
     fn removing_unknown_client_is_noop() {
         let mut hub = SubscriptionHub::new();
         assert!(hub.remove_client(99).is_empty());
+    }
+
+    /// 路由判定:组合位各通道独立命中;符号大小写归一;缺位/缺客户端/
+    /// 未订阅符号返回 false。
+    #[test]
+    fn subscribed_routes_by_symbol_and_channel() {
+        let mut hub = SubscriptionHub::new();
+        hub.apply_subscribe(1, &symbols(&["AAPL"]), Channels::TRADES | Channels::DAILY);
+        hub.apply_subscribe(1, &symbols(&["nvda"]), Channels::QUOTES);
+
+        assert!(hub.subscribed(1, "AAPL", Channels::TRADES));
+        assert!(hub.subscribed(1, "AAPL", Channels::DAILY));
+        assert!(!hub.subscribed(1, "AAPL", Channels::QUOTES));
+        assert!(
+            hub.subscribed(1, "NVDA", Channels::QUOTES),
+            "小写入库归一为大写,大写查表命中"
+        );
+        assert!(!hub.subscribed(1, "NVDA", Channels::TRADES));
+        assert!(!hub.subscribed(2, "AAPL", Channels::TRADES), "未知客户端");
+        assert!(!hub.subscribed(1, "TSLA", Channels::TRADES), "未订阅符号");
+
+        // 退订后路由即断(大写归一的退订路径同样命中)。
+        hub.apply_unsubscribe(1, &symbols(&["AAPL"]), Channels::DAILY);
+        assert!(!hub.subscribed(1, "AAPL", Channels::DAILY));
+        assert!(hub.subscribed(1, "AAPL", Channels::TRADES), "其余位保留");
     }
 }

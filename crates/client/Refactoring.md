@@ -1,6 +1,20 @@
 # ZenSidus Client 重构方案
 
-> 状态:提案(2026-11-23)。本文基于当前代码逐面板盘点,诊断"HTTP 时代演进到
+> 状态:**阶段 1 已完成(2026-11-23)**。data/ 层(format/api/stream)已建成,
+> 全部 12 面板 + ETF 联价器/新闻对话框/小时钟已迁到 data 层类型化 API,
+> panels/ 已无 `protocol::`/`ServerClient`/`AppState::hub`(守门 grep 零命中),
+> 行为零变化(旧实现见同日之前的 git 历史)。§3.4 二期裁定(2026-11-23):
+> **VPS 算力约束,server 定位为纯数据分发**——§3.4-1 ScreenerExport 强类型
+> 已完成(server 侧定型,client 显示保原文 + 列头数值排序);§3.4-2 规则
+> 下沉与 §3.4-3 BarsSubscribe **取消**(规则判定与桶聚合都是计算,保持在
+> 客户端现状),§3.4-2 以 server `fan_out` 按订阅符号的**纯路由分发**替代
+> (查表无计算,单客户端行为不变,多客户端省带宽)。账号认证接入:不做。
+> 落地差异:组件落位在其自然的 widget 模块(`widgets/kline/card.rs`、
+> `widgets/datatable.rs` 的 `DataPage`/`error_view`),未另设 `ui/components/`;
+> `DataRequest<T>` 在 `data.rs`(§3.5-B 禁 mod.rs,故非 `data/mod.rs`);
+> 错误类型未引入 `DataError`——离线是静默跳过不是错误,其余错误统一
+> `anyhow` + 消息中心。本文其余内容照旧:
+> 本文基于当前代码逐面板盘点,诊断"HTTP 时代演进到
 > RPC 后的架构包袱",给出目标架构、可复用组件清单与渐进迁移路线。
 > 配套背景阅读:`.agents/skills/zensidus-client/`(面板架构与实测陷阱)、
 > `.agents/skills/zensidus-server/`(线协议与 server 端约定)。
@@ -236,23 +250,27 @@ channel 容量、Lagged 处理逐面板微差。
 ```
 client/src/
 ├── lib.rs / main.rs            # 不变
-├── panels/                     # 面板(逐步迁移;每迁一个,import 换 data 层)
-│   ├── watchlist.rs …          # 结构不变,数据调用换 data::
+├── panels/                     # 面板(已全部迁移;import 全部走 data 层)
+│   ├── watchlist.rs …          # 结构不变,数据调用走 data::
+├── data.rs                     # ★ 数据层入口:DataRequest<T> 编排原语
+│   │                           #   (离线静默/代数防乱序/错误进消息中心)
 ├── data/                       # ★ 新增
-│   ├── mod.rs                  # DataError / DataRequest<T> / retry+offline 策略
-│   ├── api/                    # 类型化查询(每 RPC 域一个文件)
+│   ├── api.rs                  # 类型化查询入口(DTO 全部在此重导出)
 │   │   ├── bars.rs             #   history(symbol, tf, limit) -> Vec<Bar>
-│   │   ├── news.rs             #   for_symbols(symbols, limit)
+│   │   ├── news.rs             #   for_symbols(symbols, limit) / market(limit)
 │   │   ├── calendar.rs         #   economic(week) / earnings(day) / ipo()
 │   │   ├── screener.rs         #   export(parameter) / market_export(parameter)
 │   │   ├── snapshot.rs         #   for_symbols(symbols)
 │   │   └── text.rs             #   search(keyword, lang) / translate(from,to,text)
-│   ├── stream.rs               # 订阅封装(封 hub.set_symbols + pump + 退订)
+│   ├── stream.rs               # 订阅封装:StreamHandle + Wish(封 hub.set_symbols
+│   │                           #   + filter stage + pump + 退订/重连跟随)、
+│   │                           #   NewsPump(新闻推送)、BookSide、connected()
 │   └── format.rs               # 数值/时间格式化(从 delegates 抽出)
 ├── ui/
-│   ├── components/             # 复用组件(3.3)
-│   └── (panels 保留原位或整体挪入 ui/,二选一,倾向保留 panels/ 减少扰动)
-└── widgets/                    # 通用件(DataTable/kline/dialog/picker/menu)不变
+│   ├── components/             # (未设;组件落位在自然 widget 模块)
+└── widgets/                    # 通用件(DataTable/kline/dialog/picker/menu);
+                                #   DataPage/error_view 在 datatable.rs,
+                                #   KlineCard 在 kline/card.rs
 ```
 
 ### 3.3 可复用组件清单(从现有代码提取)
@@ -307,12 +325,6 @@ taffy 每个节点都是一次布局计算,flex 链越深、节点越多,每帧�
    组件组合;不为性能再造自绘列表;
 5. 现有反例(重构时处理):Quote 面板逐行 pill、面板标题栏多层 h_flex 嵌套;
    K 线卡在GPUI Kit 组件之上组合(不改成自绘)。
-
-**B. 模块组织:禁止 mod.rs**
-
-统一 Rust 2018 风格:`foo.rs`(模块文档 + 子模块声明 + 对外入口)+
-`foo/`(子模块实现)。已执行:`kline/mod.rs` → `kline.rs` + `kline/`。
-新目录一律照此;评审遇 `mod.rs` 直接打回。
 
 **B. 模块组织:禁止 mod.rs**
 

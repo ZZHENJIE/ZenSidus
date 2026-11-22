@@ -1,5 +1,5 @@
 //! 服务端共享状态与常驻任务:上游订阅 actor(有序执行订阅命令)、
-//! 推送泵(上游广播 → Frame → 扇出给全部客户端)、状态日志。
+//! 推送泵(上游广播 → Frame → 按客户端订阅纯路由扇出)、状态日志。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -13,7 +13,7 @@ use crate::config::Config;
 use crate::executor::{AlpacaClient, FinvizClient};
 use crate::hub::{HubDiff, SubscriptionHub};
 use crate::mapping;
-use protocol::Frame;
+use protocol::{BarKind, Channels, Frame};
 
 /// 上游订阅命令(actor 顺序执行,保序)。
 #[derive(Debug)]
@@ -78,23 +78,54 @@ impl AppState {
     /// 把差量发往上游(两个方向各自非空才发,避免空订阅帧打到上游)。
     pub fn apply_diff(&self, diff: HubDiff) {
         if !crate::hub::subscription_is_empty(&diff.subscribe)
-            && let Err(err) = self.upstream_tx.send(UpstreamCommand::Subscribe(diff.subscribe))
+            && let Err(err) = self
+                .upstream_tx
+                .send(UpstreamCommand::Subscribe(diff.subscribe))
         {
             tracing::warn!(error = %err, "upstream actor gone");
         }
         if !crate::hub::subscription_is_empty(&diff.unsubscribe)
-            && let Err(err) = self.upstream_tx.send(UpstreamCommand::Unsubscribe(diff.unsubscribe))
+            && let Err(err) = self
+                .upstream_tx
+                .send(UpstreamCommand::Unsubscribe(diff.unsubscribe))
         {
             tracing::warn!(error = %err, "upstream actor gone");
         }
     }
 
-    /// 扇出一帧给全部已认证客户端。有界通道 + `try_send`:客户端消费跟
-    /// 不上时丢掉这一帧(行情 Quote 本就 latest-wins,Trade/Bar 在极端
-    /// 突发下偶缺可接受),换来的是队列深度有界 = 延迟上界有界。
+    /// 扇出一帧给已认证客户端。**纯路由分发**:行情帧只发给订阅了该
+    /// 符号对应通道的客户端(hub 查表,一次 HashMap 查找,无任何规则
+    /// 计算——server 定位是数据分发,VPS 不做行情计算);`News` 是全
+    /// 市场推送,维持广播。
+    ///
+    /// 有界通道 + `try_send`:客户端消费跟不上时丢掉这一帧(行情 Quote
+    /// 本就 latest-wins,Trade/Bar 在极端突发下偶缺可接受),换来的是
+    /// 队列深度有界 = 延迟上界有界。锁序固定 hub → clients(与
+    /// session.rs 一致,无反向路径)。
     pub fn fan_out(&self, frame: &Frame) {
+        // 行情帧的 (symbol, 通道位):Bar 按 kind 分流(分钟/更新 bar 走
+        // BARS 位,日线走 DAILY 位——客户端分开订阅,互不串扰)。
+        let routed = match frame {
+            Frame::Quote(quote) => Some((quote.symbol.as_str(), Channels::QUOTES)),
+            Frame::Trade(trade) => Some((trade.symbol.as_str(), Channels::TRADES)),
+            Frame::Bar(bar) => Some((
+                bar.symbol.as_str(),
+                match bar.kind {
+                    BarKind::Minute | BarKind::Updated => Channels::BARS,
+                    BarKind::Daily => Channels::DAILY,
+                },
+            )),
+            _ => None,
+        };
+
+        let hub = self.hub.lock().unwrap();
         let clients = self.clients.lock().unwrap();
-        for sender in clients.values() {
+        for (client_id, sender) in clients.iter() {
+            if let Some((symbol, channels)) = routed
+                && !hub.subscribed(*client_id, symbol, channels)
+            {
+                continue;
+            }
             match sender.try_send(frame.clone()) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
@@ -128,7 +159,9 @@ pub fn spawn(
         let _stream_alive = stock; // 保活:Drop 最后句柄 = 关流
         while let Some(command) = upstream_rx.recv().await {
             let result = match command {
-                UpstreamCommand::Subscribe(subscription) => _stream_alive.subscribe(&subscription).await,
+                UpstreamCommand::Subscribe(subscription) => {
+                    _stream_alive.subscribe(&subscription).await
+                }
                 UpstreamCommand::Unsubscribe(subscription) => {
                     _stream_alive.unsubscribe(&subscription).await
                 }
@@ -228,7 +261,9 @@ fn message_ts_ms(message: &anysdk::alpaca_stream::StockMessage) -> Option<i64> {
     let time = match message {
         StockMessage::Quote(quote) => quote.time,
         StockMessage::Trade(trade) => trade.time,
-        StockMessage::MinuteBar(bar) | StockMessage::UpdatedBar(bar) | StockMessage::DailyBar(bar) => bar.time,
+        StockMessage::MinuteBar(bar)
+        | StockMessage::UpdatedBar(bar)
+        | StockMessage::DailyBar(bar) => bar.time,
         _ => return None,
     };
     Some(time.timestamp_millis())

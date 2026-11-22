@@ -9,34 +9,31 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, IntoElement,
-    ParentElement as _, Pixels, Render, SharedString, Size, Styled, WeakEntity, Window,
+    App, AppContext as _, ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, SharedString, Size,
+    Stateful, StatefulInteractiveElement as _, Styled, WeakEntity, Window,
     assets::IconName,
     base::dock::{PanelEvent, PanelInfo, PanelState},
     base::{h_flex, v_flex},
     component::{
-        ActiveTheme as _, button::Button,
-        combobox::ComboboxEvent, searchable_list::SearchableVec, table::TableState,
-        tab::{Tab, TabBar}, v_virtual_list, VirtualListScrollHandle,
+        ActiveTheme as _, VirtualListScrollHandle, button::Button, combobox::ComboboxEvent,
+        scroll::ScrollableElement as _, searchable_list::SearchableVec, table::TableState,
+        v_virtual_list,
     },
     div, px, size,
 };
 
-use protocol::{RpcRequestPayload, RpcResponsePayload};
-
 use crate::panels::{Panel, panel_title, refresh_button};
 use crate::tr;
-use crate::utils::state::{AppState, HubEvent};
-use crate::utils::{AppIcon, message};
+use crate::utils::AppIcon;
+use crate::utils::state::AppState;
 use crate::widgets::datatable::{self, StockScreenerDelegate};
 use crate::widgets::dialog::{open_confirm_dialog, open_screener_preset_dialog};
-use crate::widgets::kline::{self, Kline, KlineState, Timeframe};
+use crate::widgets::kline::{
+    self, KlineState, Timeframe,
+    card::{CARD_H, kline_card},
+};
 use crate::widgets::picker::{PickerAction, StringPicker};
-
-/// One chart card's height: ticker label + the K-line canvas.
-const CARD_H: f32 = 260.;
-/// The K-line canvas inside a card (the label row takes the rest).
-const CARD_CHART_H: f32 = 240.;
 
 /// The panel's content view.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -142,15 +139,13 @@ impl Panel for StockScreenerPanel {
             .detach();
         // 离线期间创建的图表状态永远拉不到历史(拉取被静默跳过):连接
         // 建立即清空,可见范围随之重拉。
-        let hub = cx.global::<AppState>().hub.clone();
-        cx.subscribe(&hub, |this, _, _: &HubEvent, cx| {
+        crate::data::stream::on_status_change(cx, |this, _, cx| {
             if this.charts.is_empty() {
                 return;
             }
             this.charts.clear();
             cx.notify();
-        })
-        .detach();
+        });
         this
     }
 
@@ -167,7 +162,11 @@ impl StockScreenerPanel {
     /// Switch the content view (0 = Table, 1 = Chart; the Chart tab only
     /// exists when the result has a Ticker column).
     fn set_view_mode(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let mode = if ix == 1 { ViewMode::Chart } else { ViewMode::Table };
+        let mode = if ix == 1 {
+            ViewMode::Chart
+        } else {
+            ViewMode::Table
+        };
         if self.view_mode != mode {
             self.view_mode = mode;
             cx.notify();
@@ -278,63 +277,34 @@ impl StockScreenerPanel {
         // Finviz token 已下沉服务端;唯一的前置条件是 server 在线。
         // 离线时静默跳过:启动自动加载等 Connected 后由 reload_on_connect 补,
         // 手动刷新则等连接后自然生效。
-        let Ok(server) = AppState::server(cx) else {
-            return;
-        };
-        let parameter = super::screener_parameter_dto(&parameter);
-
-        // Stamp the fetch generation: a preset switch or settings sync while
-        // this request is in flight invalidates its outcome.
-        let Ok(generation) = table.update(cx, |state, cx| {
-            let delegate = state.delegate_mut();
-            delegate.is_loading = true;
-            delegate.fetch_generation += 1;
-            cx.notify();
-            delegate.fetch_generation
-        }) else {
-            return;
-        };
-        cx.spawn(async move |cx| {
-            let result = async {
-                match server
-                    .rpc_checked(RpcRequestPayload::ScreenerExport { parameter })
-                    .await?
-                {
-                    RpcResponsePayload::ScreenerExport(export) => Ok(export),
-                    other => Err(anyhow::anyhow!("unexpected rpc response: {other:?}")),
-                }
-            }
-            .await;
-            match result {
-                Ok(result) => {
-                    let _ = table.update(cx, |state, cx| {
-                        let delegate = state.delegate_mut();
-                        if delegate.fetch_generation != generation {
-                            // Superseded while in flight: discard silently,
-                            // the newer fetch owns the loading flag now.
-                            return;
-                        }
-                        delegate.set_data(result.headers, result.rows);
-                        // The columns follow the export's headers: rebuild
-                        // the table's column-group snapshot.
-                        state.refresh(cx);
-                        cx.notify();
-                    });
-                }
-                Err(err) => {
-                    let _ = table.update(cx, |state, cx| {
-                        let delegate = state.delegate_mut();
-                        if delegate.fetch_generation != generation {
-                            return;
-                        }
-                        delegate.is_loading = false;
-                        cx.notify();
-                    });
-                    cx.update(|cx| message::error(tr!("app.stock_screener.failed"), err, cx));
-                }
-            }
-        })
-        .detach();
+        crate::data::DataRequest::new(table, tr!("app.stock_screener.failed"))
+            .run(
+                cx,
+                |state, cx| {
+                    let delegate = state.delegate_mut();
+                    delegate.page.is_loading = true;
+                    delegate.page.fetch_generation += 1;
+                    cx.notify();
+                    Some(delegate.page.fetch_generation)
+                },
+                // A preset switch or settings sync while this request is in
+                // flight invalidates its outcome.
+                |state, generation| state.delegate_mut().page.fetch_generation == generation,
+                move |server| async move {
+                    crate::data::api::screener::export(&server, &parameter).await
+                },
+                |state, cx, _generation, export| {
+                    let delegate = state.delegate_mut();
+                    delegate.set_data(export.headers, export.rows);
+                    // The columns follow the export's headers: rebuild the
+                    // table's column-group snapshot.
+                    state.refresh(cx);
+                    cx.notify();
+                },
+                |state, _cx, _generation, _err| {
+                    state.delegate_mut().page.is_loading = false;
+                },
+            );
     }
 }
 
@@ -396,7 +366,7 @@ impl gpui_kit::component::dock::Panel for StockScreenerPanel {
         Some(
             div()
                 .flex_shrink_0()
-                .w(px(200.))
+                .w(px(100.))
                 .child(self.picker.managed_element(
                     tr!("app.stock_screener.pick_preset"),
                     {
@@ -501,10 +471,16 @@ impl Render for StockScreenerPanel {
 }
 
 impl StockScreenerPanel {
-    /// The content view's tab strip (Table | Chart) plus, in chart mode, the
-    /// timeframe dropdown. The Chart tab only renders when the export has a
-    /// Ticker column.
-    fn render_view_tabs(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The content view's segmented switch (Table | Chart), drawn with the
+    /// TabBar segmented variant's theme tokens but as a full row: each
+    /// option takes the same width, and in chart mode the timeframe
+    /// dropdown lives **inside** the Chart segment's rectangle. The Chart
+    /// segment only renders when the export has a Ticker column.
+    fn render_view_tabs(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         use gpui_kit::component::{
             Sizable as _, button::ButtonVariants as _, menu::DropdownMenu as _,
         };
@@ -514,52 +490,73 @@ impl StockScreenerPanel {
         let chart_mode = self.view_mode == ViewMode::Chart && has_ticker;
         let timeframe = self.chart_timeframe;
 
-        let mut row = h_flex()
-            .items_center()
+        let mut track = h_flex()
+            .w_full()
             .flex_shrink_0()
-            .px_1()
-            .pt_1()
-            .gap_1()
-            .child(
-                TabBar::new("screener-view")
-                    .segmented()
-                    .child(Tab::new().label(tr!("app.stock_screener.tab_table")))
-                    .children(has_ticker.then(|| Tab::new().label(tr!("app.stock_screener.tab_chart"))))
-                    .selected_index(if chart_mode { 1 } else { 0 })
-                    .on_click({
-                        let weak = weak.clone();
-                        move |ix, _, cx| {
-                            let _ = weak.update(cx, |this, cx| this.set_view_mode(*ix, cx));
-                        }
-                    }),
+            .mx_1()
+            .mt_1()
+            .h(px(32.))
+            .p(px(2.))
+            .gap(px(2.))
+            .rounded_lg()
+            .bg(cx.theme().tokens.tab_bar_segmented)
+            .child(segment_cell(
+                "screener-tab-table",
+                tr!("app.stock_screener.tab_table"),
+                !chart_mode,
+                {
+                    let weak = weak.clone();
+                    move |_, _, cx| {
+                        let _ = weak.update(cx, |this, cx| this.set_view_mode(0, cx));
+                    }
+                },
+                cx,
+            ));
+
+        if has_ticker {
+            let chart_cell = segment_cell(
+                "screener-tab-chart",
+                tr!("app.stock_screener.tab_chart"),
+                chart_mode,
+                {
+                    let weak = weak.clone();
+                    move |_, _, cx| {
+                        let _ = weak.update(cx, |this, cx| this.set_view_mode(1, cx));
+                    }
+                },
+                cx,
             );
-        if chart_mode {
-            row = row.child(
-                Button::new("screener-timeframe")
-                    .ghost()
-                    .small()
-                    .label(timeframe.label())
-                    .icon(IconName::ChevronDown)
-                    .dropdown_menu({
-                        let weak = weak.clone();
-                        move |menu, _, _| {
-                            kline::timeframe_menu(
-                                timeframe,
-                                {
-                                    let weak = weak.clone();
-                                    move |tf, cx| {
-                                        let _ = weak.update(cx, |this, cx| {
-                                            this.set_chart_timeframe(tf, cx)
-                                        });
-                                    }
-                                },
-                                menu,
-                            )
-                        }
-                    }),
-            );
+            track = track.child(if chart_mode {
+                // Chart 激活段:选项文字与周期下拉同处一个矩形。
+                chart_cell.child(
+                    Button::new("screener-timeframe")
+                        .ghost()
+                        .small()
+                        .label(timeframe.label())
+                        .icon(IconName::ChevronDown)
+                        .dropdown_menu({
+                            let weak = weak.clone();
+                            move |menu, _, _| {
+                                kline::timeframe_menu(
+                                    timeframe,
+                                    {
+                                        let weak = weak.clone();
+                                        move |tf, cx| {
+                                            let _ = weak.update(cx, |this, cx| {
+                                                this.set_chart_timeframe(tf, cx)
+                                            });
+                                        }
+                                    },
+                                    menu,
+                                )
+                            }
+                        }),
+                )
+            } else {
+                chart_cell
+            });
         }
-        row
+        track
     }
 
     /// The chart view: a virtual list over the result's tickers — only the
@@ -567,7 +564,7 @@ impl StockScreenerPanel {
     /// created and fetched lazily as it scrolls into view.
     fn render_chart_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let delegate = self.table.read(cx).delegate();
-        if delegate.is_loading {
+        if delegate.page.is_loading {
             return div()
                 .flex_1()
                 .flex()
@@ -582,7 +579,10 @@ impl StockScreenerPanel {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(datatable::empty_view(tr!("app.stock_screener.no_ticker"), cx))
+                .child(datatable::empty_view(
+                    tr!("app.stock_screener.no_ticker"),
+                    cx,
+                ))
                 .into_any_element();
         };
         if tickers.is_empty() {
@@ -595,58 +595,77 @@ impl StockScreenerPanel {
                 .into_any_element();
         }
 
-        let muted = cx.theme().muted_foreground;
         let sizes: Rc<Vec<Size<Pixels>>> =
             Rc::new(tickers.iter().map(|_| size(px(0.), px(CARD_H))).collect());
         let view = cx.entity();
-        v_virtual_list(view, "screener-charts", sizes, move |this, range, window, cx| {
-            let visible: Vec<String> = range
-                .clone()
-                .filter_map(|ix| tickers.get(ix).cloned())
-                .collect();
-            if !visible.is_empty() {
-                // 懒加载出帧外执行:渲染回调里不做状态变更。
-                cx.defer_in(window, move |this, _, cx| this.ensure_charts(visible, cx));
-            }
-            range
-                .map(|ix| {
-                    let ticker = &tickers[ix];
-                    let chart = match this.charts.get(ticker) {
-                        // 已有历史:渲染 K 线(滚轮让位给列表滚动;拖拽平移/十字光标保留)。
-                        Some(state) if !state.read(cx).bars().is_empty() => {
-                            let id = SharedString::from(format!("screener-kline-{ticker}"));
-                            div()
-                                .h(px(CARD_CHART_H))
-                                .child(Kline::new(state.clone()).wheel_zoom(false).with_id(id))
+        div()
+            .flex_1()
+            .min_h_0()
+            .child(
+                v_virtual_list(
+                    view,
+                    "screener-charts",
+                    sizes,
+                    move |this, range, window, cx| {
+                        let visible: Vec<String> = range
+                            .clone()
+                            .filter_map(|ix| tickers.get(ix).cloned())
+                            .collect();
+                        if !visible.is_empty() {
+                            // 懒加载出帧外执行:渲染回调里不做状态变更。
+                            cx.defer_in(window, move |this, _, cx| this.ensure_charts(visible, cx));
                         }
-                        // 历史在途/未拉:转圈。
-                        _ => div()
-                            .h(px(CARD_CHART_H))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(datatable::loading_view()),
-                    };
-                    // w_full:虚拟列表按测量宽度布局条目,卡片不带显式宽度
-                    // 会退化成内容宽,图表宽度归零(实测崩溃)。
-                    v_flex()
-                        .w_full()
-                        .child(
-                            div()
-                                .px_2()
-                                .pt_1()
-                                .text_xs()
-                                .text_color(muted)
-                                .child(ticker.clone()),
-                        )
-                        .child(chart)
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>()
-        })
+                        range
+                            .map(|ix| {
+                                let ticker = &tickers[ix];
+                                kline_card(
+                                    ticker.clone().into(),
+                                    this.charts.get(ticker).cloned(),
+                                    cx,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    },
+                )
+                .size_full()
+                .track_scroll(&self.chart_scroll),
+            )
+            // 虚拟列表自身不带滚动条(表格是 DataTable 自带):挂一个竖向
+            // overlay 滚动条,长列表往返不再靠滚轮硬滚。
+            .vertical_scrollbar(&self.chart_scroll)
+            .into_any_element()
+    }
+}
+
+/// 分段开关的一个单元格(TabBar segmented 同款令牌):激活 = 背景 pill +
+/// 高亮文字,未激活 = 透明底 muted 文字、hover 提亮。`flex_1` 使各段同宽。
+fn segment_cell(
+    id: &'static str,
+    label: SharedString,
+    active: bool,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
+) -> Stateful<Div> {
+    let cell = div()
+        .id(id)
         .flex_1()
-        .min_h_0()
-        .track_scroll(&self.chart_scroll)
-        .into_any_element()
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .px_2()
+        .text_sm()
+        .cursor_pointer()
+        .rounded_lg()
+        .on_click(on_click);
+    if active {
+        cell.bg(cx.theme().secondary)
+            .text_color(cx.theme().secondary_foreground)
+            .child(label)
+    } else {
+        cell.text_color(cx.theme().muted_foreground)
+            .hover(|style| style.bg(cx.theme().secondary_hover))
+            .child(label)
     }
 }

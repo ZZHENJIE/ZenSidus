@@ -18,6 +18,7 @@ use gpui_kit::{
     px,
 };
 
+use crate::data::format::format_size;
 use crate::tr;
 use crate::widgets::datatable;
 
@@ -110,22 +111,6 @@ impl ExchangeTableDelegate {
         self.has_pool = !pool.is_empty();
         self.pool = pool;
     }
-}
-
-/// `1,234,567` — sizes read better grouped.
-fn format_size(size: i64) -> String {
-    let digits = size.abs().to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    if size < 0 {
-        out.insert(0, '-');
-    }
-    out
 }
 
 impl TableDelegate for ExchangeTableDelegate {

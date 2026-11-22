@@ -74,9 +74,9 @@ fn ms(time: chrono::DateTime<chrono::Utc>) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anysdk::alpaca_stream::{NewsMessage, StockMessage};
     use anysdk::alpaca_stream::news::NewsArticle;
     use anysdk::alpaca_stream::stocks::{BarMessage, QuoteMessage, TradeMessage};
+    use anysdk::alpaca_stream::{NewsMessage, StockMessage};
     use chrono::{DateTime, TimeZone, Utc};
 
     fn t() -> DateTime<Utc> {

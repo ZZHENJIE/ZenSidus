@@ -19,7 +19,7 @@ pub use rpc::{
     Bar, EarningsItem, EconomicItem, IpoItem, NewsItem, RpcRequestPayload, RpcResponsePayload,
     ScreenerExport, SearchItem, SnapshotItem,
 };
-pub use screener::ScreenerParameter;
+pub use screener::{Cell, ScreenerParameter};
 
 use serde::{Deserialize, Serialize};
 
@@ -124,7 +124,9 @@ pub enum Frame {
     },
     /// server 拒绝认证(动态码无效/过期、会话令牌失效):发完即断开。客户端
     /// 收到后停止重试(认证失败不是瞬态错误),等人工输入新码。
-    AuthFail { reason: String },
+    AuthFail {
+        reason: String,
+    },
 
     // ── 心跳 ──
     /// client → server,10s 间隔。
@@ -144,7 +146,9 @@ pub enum Frame {
         channels: Channels,
     },
     /// server 对 Subscribe 的确认。
-    Subscribed { id: u32 },
+    Subscribed {
+        id: u32,
+    },
 
     // ── 行情推送(server → client)──
     Quote(QuoteData),
@@ -163,7 +167,10 @@ pub enum Frame {
     },
     /// bars RPC 的翻页进度(D2):`fetched` 为截至当前的累计条数;
     /// 终值仍经 [`Frame::RpcResponse`] 送达。
-    RestProgress { req_id: u32, fetched: u64 },
+    RestProgress {
+        req_id: u32,
+        fetched: u64,
+    },
 }
 
 /// 单帧长度上限(64 MiB):screener 全量导出是最大的合法帧,远小于此值;
@@ -374,7 +381,11 @@ mod tests {
         for (index, chunk) in chunks.iter().enumerate() {
             let frames = decoder.feed(chunk).unwrap();
             if index == last {
-                assert_eq!(frames, vec![frame.clone()], "final chunk completes the frame");
+                assert_eq!(
+                    frames,
+                    vec![frame.clone()],
+                    "final chunk completes the frame"
+                );
             } else {
                 assert!(frames.is_empty(), "chunk {index} cannot complete a frame");
             }
@@ -393,16 +404,15 @@ mod tests {
         assert_eq!(decoder.feed(&bytes).unwrap(), vec![a, b]);
 
         // 垃圾长度字段:0xFFFF_FFFF 超上限。
-        let err = decoder
-            .feed(&0xFFFF_FFFFu32.to_le_bytes())
-            .unwrap_err();
+        let err = decoder.feed(&0xFFFF_FFFFu32.to_le_bytes()).unwrap_err();
         assert!(matches!(err, FrameDecodeError::FrameTooLarge(0xFFFF_FFFF)));
     }
 
     /// Channels 位标往返。
     #[test]
     fn channels_roundtrip() {
-        let all = Channels::TRADES | Channels::QUOTES | Channels::BARS | Channels::DAILY | Channels::NEWS;
+        let all =
+            Channels::TRADES | Channels::QUOTES | Channels::BARS | Channels::DAILY | Channels::NEWS;
         let bytes = postcard::to_allocvec(&all).unwrap();
         let back: Channels = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(back, all);

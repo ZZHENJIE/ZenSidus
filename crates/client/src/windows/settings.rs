@@ -21,7 +21,7 @@ use gpui_kit::{
     div,
 };
 
-use crate::utils::state::{HubEvent, AppState};
+use crate::utils::state::{AppState, HubEvent};
 use crate::utils::{AppIcon, Theme, settings, theme};
 use crate::windows::{AppWindow, WindowType, hook_should_close};
 
@@ -217,7 +217,6 @@ impl AppWindow for SettingsWindow {
             Settings::new("settings")
                 .page(self.general_page())
                 .page(self.server_page())
-
                 .page(self.market_screener_page())
                 .page(self.small_clock_page())
                 .page(self.logs_page()),

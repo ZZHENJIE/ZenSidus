@@ -21,7 +21,6 @@ use gpui_kit::{
     div, px,
 };
 
-
 use crate::tr;
 use crate::utils::exchanges::EXCHANGE_CODES;
 use crate::utils::state::AppState;

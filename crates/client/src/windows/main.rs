@@ -8,7 +8,7 @@ pub mod status_bar;
 use crate::{
     panels,
     utils::message::MessageLog,
-    utils::state::{HubEvent, AppState},
+    utils::state::{AppState, HubEvent},
     widgets::menu::{self, OnActionsExt},
     windows::{AppWindow, DockWindow, WindowType, dump_dock},
 };

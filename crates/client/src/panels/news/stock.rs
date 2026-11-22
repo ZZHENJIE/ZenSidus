@@ -9,8 +9,6 @@ use gpui_kit::{
     div,
 };
 
-use protocol::{RpcRequestPayload, RpcResponsePayload};
-
 use crate::panels::{Panel, panel_title, refresh_button};
 use crate::tr;
 use crate::utils::{AppIcon, state::AppState};
@@ -27,9 +25,8 @@ impl StockNewsPanel {
         self.table.read(cx).delegate().symbol.clone()
     }
 
-    /// Fetch one page of news for the followed symbol through the app's
-    /// Alpaca client. Without Alpaca credentials nothing is sent: the user
-    /// gets a message instead.
+    /// Fetch one page of news for the followed symbol. Offline the fetch is
+    /// skipped silently (the connection lands later via `reload_on_connect`).
     fn fetch(table: WeakEntity<TableState<StockNewsDelegate>>, cx: &mut App) {
         let Some(symbol) = table
             .upgrade()
@@ -37,24 +34,12 @@ impl StockNewsPanel {
         else {
             return;
         };
-        if super::server_rpc(cx).is_none() {
-            return;
-        }
 
         datatable::load_rows(
             table,
             tr!("app.stock_news.failed"),
             move |server| async move {
-                match server
-                    .rpc_checked(RpcRequestPayload::News {
-                        symbols: vec![symbol],
-                        limit: 50,
-                    })
-                    .await?
-                {
-                    RpcResponsePayload::News(items) => Ok(items),
-                    other => Err(anyhow::anyhow!("unexpected rpc response: {other:?}")),
-                }
+                crate::data::api::news::for_symbols(&server, vec![symbol], 50).await
             },
             cx,
         );

@@ -8,10 +8,9 @@
 use std::collections::BTreeSet;
 
 use anysdk::alpaca_stream::StockMessage;
-use chrono::{DateTime, Local, Utc};
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle, IntoElement,
-    ParentElement as _, Render, SharedString, Styled, Task, WeakEntity, Window,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, IntoElement,
+    ParentElement as _, Render, SharedString, Styled, WeakEntity, Window,
     assets::IconName,
     base::dock::{PanelEvent, PanelInfo, PanelState},
     component::{
@@ -24,10 +23,11 @@ use gpui_kit::{
     div, px,
 };
 
+use crate::data::format;
+use crate::data::stream::{StreamConsumer, StreamHandle, Wish};
 use crate::panels::Panel;
 use crate::tr;
-use crate::utils::state::stream_dispatch::{SharedSpec, StreamSpec, spawn_filter_stage};
-use crate::utils::state::{HubEvent, ServerStatus, AppState, SymbolWish};
+use crate::utils::state::AppState;
 use crate::utils::{AppIcon, settings};
 use crate::widgets::datatable::{self, WatchlistDelegate};
 use crate::widgets::dialog::{dialog_footer, open_confirm_dialog, open_search_symbol_dialog};
@@ -41,12 +41,8 @@ pub struct WatchlistPanel {
     /// Whether this tab is the active one in its tab group. A hidden panel
     /// unsubscribes from the stream and resubscribes when shown again.
     active: bool,
-    subscriber: EntityId,
-    /// The filter the background drain stage applies, kept in step with
-    /// the selection and rules.
-    spec: SharedSpec,
-    /// Live message pump for the current connection.
-    pump: Option<Task<()>>,
+    /// The panel's stream subscription (wish, filter, pump, lifecycle).
+    stream: StreamHandle<Self>,
 }
 
 impl Panel for WatchlistPanel {
@@ -65,18 +61,6 @@ impl Panel for WatchlistPanel {
         let delegate = WatchlistDelegate::new(persisted_group, cx);
         let picker = StringPicker::new(group_names(cx), delegate.group.clone(), window, cx);
         let table = datatable::new_table_state(cx, window, |_| delegate);
-
-        let hub = cx.global::<AppState>().hub.clone();
-
-        // Connection status drives the message pump: connected attaches a
-        // fresh broadcast receiver, any other status cancels it.
-        cx.subscribe(&hub, |this, hub, _: &HubEvent, cx| {
-            match hub.read(cx).status() {
-                ServerStatus::Connected => this.refresh_pump(cx),
-                _ => this.pump = None,
-            }
-        })
-        .detach();
 
         // Picking a group in the picker switches the panel to it.
         cx.subscribe(
@@ -104,27 +88,15 @@ impl Panel for WatchlistPanel {
         })
         .detach();
 
-        // Release the stream subscription no matter how this panel dies.
-        let subscriber = cx.entity_id();
-        let release_hub = hub.clone();
-        cx.on_release(move |_, cx| {
-            release_hub.update(cx, |hub, _| {
-                hub.set_symbols(subscriber, SymbolWish::default())
-            });
-        })
-        .detach();
-
         let mut this = Self {
             focus_handle,
             picker,
             table,
             active: true,
-            subscriber,
-            spec: SharedSpec::default(),
-            pump: None,
+            stream: StreamHandle::new(cx),
         };
         this.sync_subscription(cx);
-        this.refresh_pump(cx);
+        this.stream.attach_pump(cx);
         this
     }
 
@@ -148,6 +120,21 @@ fn group_names(cx: &App) -> Vec<String> {
         .collect()
 }
 
+impl StreamConsumer for WatchlistPanel {
+    const STAGE: &'static str = "watchlist";
+
+    fn stream_handle(&mut self) -> &mut StreamHandle<Self> {
+        &mut self.stream
+    }
+
+    /// Apply a whole drained batch (one entity update per pump cycle).
+    fn apply_batch(&mut self, batch: Vec<StockMessage>, cx: &mut Context<Self>) {
+        for message in batch {
+            self.apply_message(message, cx);
+        }
+    }
+}
+
 impl WatchlistPanel {
     /// The panel's currently selected group (lives in the delegate).
     pub(crate) fn group(&self, cx: &App) -> Option<String> {
@@ -167,70 +154,21 @@ impl WatchlistPanel {
         } else {
             BTreeSet::new()
         };
-        *self.spec.write().expect("spec lock poisoned") = StreamSpec {
-            symbols: wanted.clone(),
-            trades: true,
-            ..Default::default()
-        };
-        *self.spec.write().expect("spec lock poisoned") = StreamSpec {
-            symbols: wanted.clone(),
-            trades: true,
-            ..Default::default()
-        };
-        let hub = cx.global::<AppState>().hub.clone();
-        hub.update(cx, |hub, _| {
-            hub.set_symbols(
-                self.subscriber,
-                SymbolWish {
-                    symbols: wanted,
-                    trades: true,
-                    bars: false,
-                    quotes: false,
-                },
-            )
-        });
-    }
-
-    /// (Re)attach the broadcast-receiver pump. Each pump owns one receiver of
-    /// the hub's stream; the whole channel is broadcast to every receiver,
-    /// so the drain batches whatever is queued — one entity update per batch
-    /// instead of one per message keeps the main thread cheap even while
-    /// other panels' high-rate subscriptions fill the channel.
-    fn refresh_pump(&mut self, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().hub.clone();
-        let clock = hub.read(cx).clock();
-        let Some(rx) = hub.read(cx).stock_messages() else {
-            return;
-        };
-        let spec = self.spec.clone();
-        let (tx, mut rx_out) = tokio::sync::mpsc::channel(8);
-        cx.background_executor()
-            .spawn(spawn_filter_stage("watchlist", rx, spec, tx, clock))
-            .detach();
-        self.pump = Some(cx.spawn(async move |this, cx| {
-            while let Some(batch) = rx_out.recv().await {
-                if this
-                    .update(cx, |this, cx| this.apply_batch(batch, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        }));
-    }
-
-    /// Apply a whole drained batch (one entity update per pump cycle).
-    fn apply_batch(&mut self, batch: Vec<StockMessage>, cx: &mut Context<Self>) {
-        for message in batch {
-            self.apply_message(message, cx);
-        }
+        self.stream.set_wish(
+            Wish {
+                symbols: wanted,
+                trades: true,
+                ..Default::default()
+            },
+            cx,
+        );
     }
 
     fn apply_message(&mut self, message: StockMessage, cx: &mut Context<Self>) {
         let (symbol, patch) = match message {
             StockMessage::Trade(trade) => (
                 trade.symbol,
-                Patch::Last(trade.price, format_time(trade.time)),
+                Patch::Last(trade.price, format::format_clock_local(trade.time).into()),
             ),
             StockMessage::DailyBar(bar) => (bar.symbol, Patch::Open(bar.open)),
             _ => return,
@@ -300,13 +238,6 @@ enum Patch {
     Open(f64),
 }
 
-fn format_time(time: DateTime<Utc>) -> SharedString {
-    time.with_timezone(&Local)
-        .format("%H:%M:%S")
-        .to_string()
-        .into()
-}
-
 impl gpui_kit::base::dock::Panel for WatchlistPanel {
     fn panel_name(&self) -> &'static str {
         Self::NAME
@@ -327,19 +258,14 @@ impl gpui_kit::base::dock::Panel for WatchlistPanel {
         // cycles while hidden. Reactivating (or a later `Connected` event)
         // reattaches it.
         if active {
-            self.refresh_pump(cx);
+            self.stream.attach_pump(cx);
         } else {
-            self.pump = None;
+            self.stream.stop_pump();
         }
     }
 
     fn on_removed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().hub.clone();
-        let subscriber = self.subscriber;
-        hub.update(cx, |hub, _| {
-            hub.set_symbols(subscriber, SymbolWish::default())
-        });
-        self.pump = None;
+        self.stream.unsubscribe(cx);
     }
 }
 
@@ -396,7 +322,7 @@ impl gpui_kit::component::dock::Panel for WatchlistPanel {
         Some(
             div()
                 .flex_shrink_0()
-                .w(px(200.))
+                .w(px(100.))
                 .child(self.picker.managed_element(
                     tr!("app.watchlist.pick_group"),
                     {

@@ -9,11 +9,10 @@
 use std::collections::BTreeSet;
 
 use anysdk::alpaca_stream::StockMessage;
-use protocol::{RpcRequestPayload, RpcResponsePayload};
 use gpui_kit::{
-    AnyElement, App, Context, Entity, EntityId, EventEmitter, FocusHandle, InteractiveElement as _,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, InteractiveElement as _,
     IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Task, WeakEntity, Window,
+    Styled as _, WeakEntity, Window,
     base::dock::{PanelEvent, PanelInfo, PanelState},
     base::{h_flex, v_flex},
     component::{
@@ -23,12 +22,13 @@ use gpui_kit::{
     div, px,
 };
 
+use crate::data::api::ScreenerExport;
+use crate::data::stream::{ServerStatus, StreamConsumer, StreamHandle, Wish, connected};
 use crate::panels::{Panel, panel_title, refresh_button};
 use crate::tr;
 use crate::utils::exchanges::exchange_label;
 use crate::utils::settings::MarketScreenerPreset;
-use crate::utils::state::stream_dispatch::{SharedSpec, StreamSpec, spawn_filter_stage};
-use crate::utils::state::{HubEvent, ServerStatus, AppState, SymbolWish};
+use crate::utils::state::AppState;
 use crate::utils::{AppIcon, message, settings};
 use crate::widgets::datatable::{self, ExchangeTableDelegate};
 use crate::widgets::dialog::{MarketPresetDraft, open_confirm_dialog, open_market_preset_dialog};
@@ -53,12 +53,8 @@ pub struct MarketScreenerPanel {
     /// Whether this tab is the active one in its tab group. A hidden panel
     /// unsubscribes from the stream and resubscribes when shown again.
     active: bool,
-    subscriber: EntityId,
-    /// The filter the background drain stage applies, kept in step with
-    /// the selection and rules.
-    spec: SharedSpec,
-    /// Live message pump for the current connection.
-    pump: Option<Task<()>>,
+    /// The panel's stream subscription (wish, filter, pump, lifecycle).
+    stream: StreamHandle<Self>,
     /// Monotonic fetch counter: a preset switch while a pool fetch is in
     /// flight invalidates its outcome.
     fetch_generation: u64,
@@ -85,27 +81,6 @@ impl Panel for MarketScreenerPanel {
             .or_else(|| preset_names(cx).first().cloned());
 
         let picker = StringPicker::new(preset_names(cx), preset.clone(), window, cx);
-        let hub = cx.global::<AppState>().hub.clone();
-
-        // Connection status drives the message pump: connected attaches a
-        // fresh broadcast receiver, any other status cancels it and drops
-        // the cached quotes (nothing shown may be trusted anymore).
-        cx.subscribe(&hub, |this, hub, _: &HubEvent, cx| {
-            match hub.read(cx).status() {
-                ServerStatus::Connected => {
-                    this.set_connected(true, cx);
-                    this.refresh_pump(cx);
-                    // The startup pool fetch is skipped silently while
-                    // offline; pull it now that the route is up.
-                    this.fetch(cx);
-                }
-                _ => {
-                    this.set_connected(false, cx);
-                    this.pump = None;
-                }
-            }
-        })
-        .detach();
 
         // Picking a preset in the picker switches the panel to it.
         cx.subscribe(
@@ -127,16 +102,6 @@ impl Panel for MarketScreenerPanel {
         })
         .detach();
 
-        // Release the stream subscription no matter how this panel dies.
-        let subscriber = cx.entity_id();
-        let release_hub = hub.clone();
-        cx.on_release(move |_, cx| {
-            release_hub.update(cx, |hub, _| {
-                hub.set_symbols(subscriber, SymbolWish::default())
-            });
-        })
-        .detach();
-
         let mut this = Self {
             focus_handle,
             picker,
@@ -146,20 +111,76 @@ impl Panel for MarketScreenerPanel {
             loaded: None,
             pool: Vec::new(),
             active: true,
-            subscriber,
-            spec: SharedSpec::default(),
-            pump: None,
+            stream: StreamHandle::new(cx),
             fetch_generation: 0,
             pending_resync: false,
         };
         this.resync(window, cx);
-        this.refresh_pump(cx);
+        this.stream.attach_pump(cx);
         this
     }
 
     /// Refetch the pool from the selected preset's Finviz source.
     fn refresh(entity: WeakEntity<Self::DataEntity>, cx: &mut App) {
         let _ = entity.update(cx, |this, cx| this.fetch(cx));
+    }
+}
+
+impl StreamConsumer for MarketScreenerPanel {
+    const STAGE: &'static str = "market";
+
+    fn stream_handle(&mut self) -> &mut StreamHandle<Self> {
+        &mut self.stream
+    }
+
+    /// Mirror the stream status: connected re-pulls the pool (the startup
+    /// fetch was skipped silently while offline); disconnected drops the
+    /// tables' connected flag (nothing shown may be trusted anymore). The
+    /// hit log itself is history and survives untouched.
+    fn on_status(&mut self, status: &ServerStatus, cx: &mut Context<Self>) {
+        self.set_connected(matches!(status, ServerStatus::Connected), cx);
+        if matches!(status, ServerStatus::Connected) {
+            self.fetch(cx);
+        }
+    }
+
+    fn apply_batch(&mut self, messages: Vec<StockMessage>, cx: &mut Context<Self>) {
+        let quotes: Vec<_> = messages
+            .into_iter()
+            .filter_map(|message| match message {
+                StockMessage::Quote(quote) => Some(quote),
+                _ => None,
+            })
+            .collect();
+        if quotes.is_empty() {
+            return;
+        }
+        // The selected preset's min_size, read once per batch: every hit is
+        // evaluated against the rule as it stood when the quote arrived.
+        let min_size = self
+            .preset
+            .as_deref()
+            .and_then(|name| {
+                cx.global::<AppState>()
+                    .settings
+                    .market_screener
+                    .presets
+                    .get(name)
+            })
+            .map(|preset| preset.min_size)
+            .unwrap_or(0);
+        // One update per table per batch: the batch already collapses the
+        // pump's scheduling; this collapses the per-message table updates.
+        for table in &self.tables {
+            table.update(cx, |state, cx| {
+                let changed = quotes
+                    .iter()
+                    .any(|quote| state.delegate_mut().apply_quote(quote, min_size));
+                if changed {
+                    cx.notify();
+                }
+            });
+        }
     }
 }
 
@@ -177,7 +198,7 @@ fn preset_names(cx: &App) -> Vec<String> {
 
 /// Ticker column of the market-screener export, located by header name (the
 /// server pins the market export columns to No. + Ticker).
-fn extract_tickers(result: &protocol::ScreenerExport) -> Vec<String> {
+fn extract_tickers(result: &ScreenerExport) -> Vec<String> {
     let Some(col) = result
         .headers
         .iter()
@@ -189,7 +210,7 @@ fn extract_tickers(result: &protocol::ScreenerExport) -> Vec<String> {
         .rows
         .iter()
         .filter_map(|row| row.get(col))
-        .map(|ticker| ticker.trim().to_string())
+        .map(|cell| cell.text.trim().to_string())
         .filter(|ticker| !ticker.is_empty())
         .collect()
 }
@@ -250,8 +271,7 @@ impl MarketScreenerPanel {
             .as_ref()
             .map(|preset| preset.exchanges.clone())
             .unwrap_or_default();
-        let hub = cx.global::<AppState>().hub.clone();
-        let connected = matches!(hub.read(cx).status(), ServerStatus::Connected);
+        let connected = connected(cx);
         self.exchanges = exchanges.clone();
         self.tables = exchanges
             .into_iter()
@@ -282,92 +302,14 @@ impl MarketScreenerPanel {
         } else {
             BTreeSet::new()
         };
-        *self.spec.write().expect("spec lock poisoned") = StreamSpec {
-            symbols: wanted.clone(),
-            quotes: true,
-            ..Default::default()
-        };
-        *self.spec.write().expect("spec lock poisoned") = StreamSpec {
-            symbols: wanted.clone(),
-            quotes: true,
-            ..Default::default()
-        };
-        let hub = cx.global::<AppState>().hub.clone();
-        hub.update(cx, |hub, _| {
-            hub.set_symbols(
-                self.subscriber,
-                SymbolWish {
-                    symbols: wanted,
-                    trades: false,
-                    bars: false,
-                    quotes: true,
-                },
-            )
-        });
-    }
-
-    /// (Re)attach the broadcast-receiver pump. Quotes arrive for the whole
-    /// union; each table's delegate filters for its own pool.
-    fn refresh_pump(&mut self, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().hub.clone();
-        let clock = hub.read(cx).clock();
-        let Some(rx) = hub.read(cx).stock_messages() else {
-            return;
-        };
-        let spec = self.spec.clone();
-        let (tx, mut rx_out) = tokio::sync::mpsc::channel(8);
-        cx.background_executor()
-            .spawn(spawn_filter_stage("market", rx, spec, tx, clock))
-            .detach();
-        self.pump = Some(cx.spawn(async move |this, cx| {
-            while let Some(batch) = rx_out.recv().await {
-                if this
-                    .update(cx, |this, cx| this.apply_batch(batch, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        }));
-    }
-
-    fn apply_batch(&mut self, messages: Vec<StockMessage>, cx: &mut Context<Self>) {
-        let quotes: Vec<_> = messages
-            .into_iter()
-            .filter_map(|message| match message {
-                StockMessage::Quote(quote) => Some(quote),
-                _ => None,
-            })
-            .collect();
-        if quotes.is_empty() {
-            return;
-        }
-        // The selected preset's min_size, read once per batch: every hit is
-        // evaluated against the rule as it stood when the quote arrived.
-        let min_size = self
-            .preset
-            .as_deref()
-            .and_then(|name| {
-                cx.global::<AppState>()
-                    .settings
-                    .market_screener
-                    .presets
-                    .get(name)
-            })
-            .map(|preset| preset.min_size)
-            .unwrap_or(0);
-        // One update per table per batch: the batch already collapses the
-        // pump's scheduling; this collapses the per-message table updates.
-        for table in &self.tables {
-            table.update(cx, |state, cx| {
-                let changed = quotes
-                    .iter()
-                    .any(|quote| state.delegate_mut().apply_quote(quote, min_size));
-                if changed {
-                    cx.notify();
-                }
-            });
-        }
+        self.stream.set_wish(
+            Wish {
+                symbols: wanted,
+                quotes: true,
+                ..Default::default()
+            },
+            cx,
+        );
     }
 
     /// Mirror the stream status into the tables' empty-state hint. The hit
@@ -400,6 +342,12 @@ impl MarketScreenerPanel {
     /// Fetch the selected preset's Finviz export into the pool. Guards run
     /// before anything is marked loading; a fetch whose generation has been
     /// superseded (another fetch, a preset switch) discards its outcome.
+    ///
+    /// 本方法总在面板自身的 update 内被调(连接观察者/refresh/resync),
+    /// 所以不能走 [`crate::data::DataRequest`]——它的 begin 阶段会对状态
+    /// 实体做 `update`,在实体自己的 update 里再 update 自己即重入崩溃。
+    /// 同步半段直接改字段(`&mut self` 本就在手),异步回写经 spawn,
+    /// 天然在本轮 update 之外。
     fn fetch(&mut self, cx: &mut Context<Self>) {
         let Some(preset_name) = self.preset.clone() else {
             return;
@@ -433,10 +381,9 @@ impl MarketScreenerPanel {
         };
         // Finviz token 已下沉服务端;唯一的前置条件是 server 在线。
         // 离线时静默跳过:启动自动加载等 Connected 后由订阅回调补抓。
-        let Ok(server) = AppState::server(cx) else {
+        let Ok(server) = crate::data::server_client(cx) else {
             return;
         };
-        let parameter = super::screener_parameter_dto(&parameter);
 
         self.fetch_generation += 1;
         let generation = self.fetch_generation;
@@ -447,16 +394,7 @@ impl MarketScreenerPanel {
             });
         }
         cx.spawn(async move |this, cx| {
-            let result = async {
-                match server
-                    .rpc_checked(RpcRequestPayload::MarketScreenerExport { parameter })
-                    .await?
-                {
-                    RpcResponsePayload::MarketScreenerExport(export) => Ok(export),
-                    other => Err(anyhow::anyhow!("unexpected rpc response: {other:?}")),
-                }
-            }
-            .await;
+            let result = crate::data::api::screener::market_export(&server, &parameter).await;
             let _ = this.update(cx, |this, cx| {
                 if this.fetch_generation != generation {
                     // Superseded while in flight: discard silently, the
@@ -558,19 +496,14 @@ impl gpui_kit::base::dock::Panel for MarketScreenerPanel {
         // cycles while hidden. Reactivating (or a later `Connected` event)
         // reattaches it.
         if active {
-            self.refresh_pump(cx);
+            self.stream.attach_pump(cx);
         } else {
-            self.pump = None;
+            self.stream.stop_pump();
         }
     }
 
     fn on_removed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().hub.clone();
-        let subscriber = self.subscriber;
-        hub.update(cx, |hub, _| {
-            hub.set_symbols(subscriber, SymbolWish::default())
-        });
-        self.pump = None;
+        self.stream.unsubscribe(cx);
     }
 }
 

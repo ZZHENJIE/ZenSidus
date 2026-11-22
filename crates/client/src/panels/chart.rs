@@ -7,22 +7,21 @@
 use std::collections::BTreeSet;
 
 use gpui_kit::{
-    AnyElement, AnyWindowHandle, App, AppContext as _, Context, Entity, EntityId, EventEmitter,
-    FocusHandle, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Task,
-    WeakEntity, Window,
+    AnyElement, AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle,
+    IntoElement, ParentElement as _, Render, SharedString, Styled as _, WeakEntity, Window,
     base::dock::{PanelEvent, PanelInfo, PanelState},
     component::button::Button,
     div,
 };
-use protocol::Bar;
 
 use anysdk::alpaca_stream::StockMessage;
 
+use crate::data::api::Bar;
+use crate::data::stream::{StreamConsumer, StreamHandle, Wish};
 use crate::panels::{Panel, panel_title, refresh_button, reload_on_connect};
 use crate::tr;
 use crate::utils::AppIcon;
-use crate::utils::state::stream_dispatch::{SharedSpec, StreamSpec, spawn_filter_stage};
-use crate::utils::state::{AppState, HubEvent, ServerStatus, SymbolWish};
+use crate::utils::state::AppState;
 use crate::widgets::datatable;
 use crate::widgets::dialog::open_search_symbol_dialog;
 use crate::widgets::icon_button;
@@ -34,12 +33,8 @@ pub struct ChartPanel {
     /// Whether this tab is the active one in its tab group. A hidden panel
     /// unsubscribes from the stream and resubscribes when shown again.
     active: bool,
-    subscriber: EntityId,
-    /// The filter the background drain stage applies, kept in step with
-    /// the selection and rules.
-    spec: SharedSpec,
-    /// Live message pump for the current connection.
-    pump: Option<Task<()>>,
+    /// The panel's stream subscription (wish, filter, pump, lifecycle).
+    stream: StreamHandle<Self>,
 }
 
 impl Panel for ChartPanel {
@@ -59,28 +54,7 @@ impl Panel for ChartPanel {
             .and_then(Timeframe::parse)
             .unwrap_or_default();
 
-        let hub = cx.global::<AppState>().hub.clone();
         let kline = cx.new(|_| KlineState::new(persisted_timeframe));
-
-        // Connection status drives the message pump: connected attaches a
-        // fresh broadcast receiver, any other status cancels it. History is
-        // RPC (reloaded via `reload_on_connect`); the pump only feeds live
-        // bars into the current tail.
-        cx.subscribe(&hub, |this, hub, _: &HubEvent, cx| match hub.read(cx).status() {
-            ServerStatus::Connected => this.refresh_pump(cx),
-            _ => this.pump = None,
-        })
-        .detach();
-
-        // Release the stream subscription no matter how this panel dies.
-        let subscriber = cx.entity_id();
-        let release_hub = hub.clone();
-        cx.on_release(move |_, cx| {
-            release_hub.update(cx, |hub, _| {
-                hub.set_symbols(subscriber, SymbolWish::default())
-            });
-        })
-        .detach();
 
         // The element paints from the state entity; viewport/interaction
         // changes notify it and this observer keeps the panel repainting.
@@ -95,15 +69,13 @@ impl Panel for ChartPanel {
             focus_handle: cx.focus_handle(),
             kline,
             active: true,
-            subscriber,
-            spec: SharedSpec::default(),
-            pump: None,
+            stream: StreamHandle::new(cx),
         };
         this.kline
             .update(cx, |state, _| state.set_symbol(persisted_symbol));
         this.sync_subscription(cx);
         // The stream may already be up: the panel can open after connect.
-        this.refresh_pump(cx);
+        this.stream.attach_pump(cx);
         // Startup load + auto-load once the connection lands.
         Self::refresh(this.kline.downgrade(), cx);
         reload_on_connect::<Self>(this.kline.downgrade(), cx);
@@ -114,6 +86,61 @@ impl Panel for ChartPanel {
     /// Bars RPC.
     fn refresh(entity: WeakEntity<Self::DataEntity>, cx: &mut App) {
         crate::widgets::kline::load_history(entity, cx);
+    }
+}
+
+impl StreamConsumer for ChartPanel {
+    const STAGE: &'static str = "chart";
+
+    fn stream_handle(&mut self) -> &mut StreamHandle<Self> {
+        &mut self.stream
+    }
+
+    /// Feed live bars into the chart tail: daily bars on 1D, minute/updated
+    /// bars aggregated into the chosen bucket on intraday timeframes. Each
+    /// change notifies the state entity (the panel renders from it, so GPUI
+    /// invalidates the view).
+    fn apply_batch(&mut self, messages: Vec<StockMessage>, cx: &mut Context<Self>) {
+        let timeframe = self.kline.read(cx).timeframe();
+        for message in messages {
+            match message {
+                StockMessage::DailyBar(bar) if timeframe == Timeframe::OneDay => {
+                    self.kline.update(cx, |state, cx| {
+                        if state.apply_daily_bar(Bar {
+                            time_ms: bar.time.timestamp_millis(),
+                            open: bar.open,
+                            high: bar.high,
+                            low: bar.low,
+                            close: bar.close,
+                            volume: bar.volume,
+                            vwap: bar.vwap,
+                            trade_count: bar.trade_count,
+                        }) {
+                            cx.notify();
+                        }
+                    });
+                }
+                StockMessage::MinuteBar(bar) | StockMessage::UpdatedBar(bar)
+                    if timeframe.is_intraday() =>
+                {
+                    self.kline.update(cx, |state, cx| {
+                        if state.apply_minute_bar(
+                            bar.time.timestamp_millis(),
+                            bar.open,
+                            bar.high,
+                            bar.low,
+                            bar.close,
+                            bar.volume,
+                            bar.vwap,
+                            bar.trade_count,
+                        ) {
+                            cx.notify();
+                        }
+                    });
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -172,96 +199,15 @@ impl ChartPanel {
             BTreeSet::new()
         };
         let bars = self.kline.read(cx).timeframe().is_intraday();
-        *self.spec.write().expect("spec lock poisoned") = StreamSpec {
-            symbols: wanted.clone(),
-            trades: true,
-            ..Default::default()
-        };
-        let hub = cx.global::<AppState>().hub.clone();
-        hub.update(cx, |hub, _| {
-            hub.set_symbols(
-                self.subscriber,
-                SymbolWish {
-                    symbols: wanted,
-                    trades: true,
-                    bars,
-                    quotes: false,
-                },
-            )
-        });
-    }
-
-    /// (Re)attach the broadcast-receiver pump, draining in batches: one
-    /// entity update per batch keeps the main thread cheap while other
-    /// panels' high-rate subscriptions fill the channel.
-    fn refresh_pump(&mut self, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().hub.clone();
-        let clock = hub.read(cx).clock();
-        let Some(rx) = hub.read(cx).stock_messages() else {
-            return;
-        };
-        let spec = self.spec.clone();
-        let (tx, mut rx_out) = tokio::sync::mpsc::channel(8);
-        cx.background_executor()
-            .spawn(spawn_filter_stage("chart", rx, spec, tx, clock))
-            .detach();
-        self.pump = Some(cx.spawn(async move |this, cx| {
-            while let Some(batch) = rx_out.recv().await {
-                if this
-                    .update(cx, |this, cx| this.apply_batch(batch, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        }));
-    }
-
-    /// Feed live bars into the chart tail: daily bars on 1D, minute/updated
-    /// bars aggregated into the chosen bucket on intraday timeframes. Each
-    /// change notifies the state entity (the panel renders from it, so GPUI
-    /// invalidates the view).
-    fn apply_batch(&mut self, messages: Vec<StockMessage>, cx: &mut Context<Self>) {
-        let timeframe = self.kline.read(cx).timeframe();
-        for message in messages {
-            match message {
-                StockMessage::DailyBar(bar) if timeframe == Timeframe::OneDay => {
-                    self.kline.update(cx, |state, cx| {
-                        if state.apply_daily_bar(Bar {
-                            time_ms: bar.time.timestamp_millis(),
-                            open: bar.open,
-                            high: bar.high,
-                            low: bar.low,
-                            close: bar.close,
-                            volume: bar.volume,
-                            vwap: bar.vwap,
-                            trade_count: bar.trade_count,
-                        }) {
-                            cx.notify();
-                        }
-                    });
-                }
-                StockMessage::MinuteBar(bar) | StockMessage::UpdatedBar(bar)
-                    if timeframe.is_intraday() =>
-                {
-                    self.kline.update(cx, |state, cx| {
-                        if state.apply_minute_bar(
-                            bar.time.timestamp_millis(),
-                            bar.open,
-                            bar.high,
-                            bar.low,
-                            bar.close,
-                            bar.volume,
-                            bar.vwap,
-                            bar.trade_count,
-                        ) {
-                            cx.notify();
-                        }
-                    });
-                }
-                _ => {}
-            }
-        }
+        self.stream.set_wish(
+            Wish {
+                symbols: wanted,
+                trades: true,
+                bars,
+                ..Default::default()
+            },
+            cx,
+        );
     }
 }
 
@@ -289,19 +235,14 @@ impl gpui_kit::base::dock::Panel for ChartPanel {
         // cycles while hidden. Reactivating (or a later `Connected` event)
         // reattaches it.
         if active {
-            self.refresh_pump(cx);
+            self.stream.attach_pump(cx);
         } else {
-            self.pump = None;
+            self.stream.stop_pump();
         }
     }
 
     fn on_removed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().hub.clone();
-        let subscriber = self.subscriber;
-        hub.update(cx, |hub, _| {
-            hub.set_symbols(subscriber, SymbolWish::default())
-        });
-        self.pump = None;
+        self.stream.unsubscribe(cx);
     }
 }
 
@@ -402,10 +343,7 @@ impl Render for ChartPanel {
         let has_symbol = state.symbol().is_some();
         let has_bars = !state.bars().is_empty();
         let loaded = state.has_loaded();
-        let connected = matches!(
-            cx.global::<AppState>().hub.read(cx).status(),
-            ServerStatus::Connected
-        );
+        let connected = crate::data::stream::connected(cx);
 
         // The chart element paints the canvas itself; the panel owns the
         // loading/empty overlays floating above the axes.

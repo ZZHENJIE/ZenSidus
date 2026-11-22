@@ -9,15 +9,14 @@ pub mod screener;
 pub mod trades;
 pub mod watchlist;
 
-pub use calendar::{EconomicDelegate, EarningsDelegate, IPODelegate};
+pub use calendar::{EarningsDelegate, EconomicDelegate, IPODelegate};
 pub use news::{MarketNewsDelegate, StockNewsDelegate};
 pub use quote::{QuoteSide, QuoteSideDelegate};
 pub use screener::{ExchangeTableDelegate, StockScreenerDelegate};
 pub use trades::TradesDelegate;
 pub use watchlist::WatchlistDelegate;
 
-
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use gpui_kit::{
     App, AppContext as _, Div, Entity, Hsla, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, SharedString, Stateful, Styled as _, TextRun, WeakEntity, Window,
@@ -29,8 +28,6 @@ use gpui_kit::{
     },
     div,
 };
-
-use crate::utils::message;
 
 /// The width of `text` as a table draws it: the window's UI font at
 /// `text_sm` (the cell text size for the tables' default density), shaped
@@ -61,12 +58,50 @@ pub(crate) fn measure_text(window: &mut Window, text: &str) -> Pixels {
 /// generation so a slow earlier response can never overwrite a newer one.
 pub trait Loadable: TableDelegate {
     type Row;
-    fn loading_mut(&mut self) -> &mut bool;
-    fn rows_mut(&mut self) -> &mut Vec<Self::Row>;
+    /// The delegate's fetched-data page (rows + fetch handshake + tri-state).
+    fn page_mut(&mut self) -> &mut DataPage<Self::Row>;
+
+    fn loading_mut(&mut self) -> &mut bool {
+        &mut self.page_mut().is_loading
+    }
+
+    fn rows_mut(&mut self) -> &mut Vec<Self::Row> {
+        &mut self.page_mut().rows
+    }
+
     /// Monotonic counter bumped by [`load_rows`] on every new fetch; the
     /// delegate owns the storage so reset paths (e.g. a symbol switch) can
     /// also invalidate in-flight requests by bumping it themselves.
-    fn fetch_generation_mut(&mut self) -> &mut u64;
+    fn fetch_generation_mut(&mut self) -> &mut u64 {
+        &mut self.page_mut().fetch_generation
+    }
+}
+
+/// One fetch's state page: the rows plus the fetch handshake and the
+/// loading/error flags — the tri-state every RPC table renders from
+/// (loading → spinner via `loading_view`, rows → the table, empty →
+/// `empty_view`; a failure keeps old rows cleared and lands in the message
+/// center, `last_error` only records it for a table that opts into
+/// rendering `error_view`).
+#[derive(Clone)]
+pub struct DataPage<Row> {
+    pub rows: Vec<Row>,
+    pub(crate) is_loading: bool,
+    pub(crate) fetch_generation: u64,
+    pub(crate) last_error: Option<SharedString>,
+}
+
+// Manual impl: the derive would demand `Row: Default`, and the row types
+// have no reason to be default-constructible.
+impl<Row> Default for DataPage<Row> {
+    fn default() -> Self {
+        Self {
+            rows: Vec::new(),
+            is_loading: false,
+            fetch_generation: 0,
+            last_error: None,
+        }
+    }
 }
 
 /// Fetch rows into a table: flag it loading, run `request` with the app's
@@ -74,6 +109,10 @@ pub trait Loadable: TableDelegate {
 /// to the message center. A table that is already gone is ignored, and a
 /// response whose fetch has been superseded (a newer `load_rows` or a
 /// delegate reset started meanwhile) is discarded without touching the rows.
+///
+/// The orchestration (offline guard, generation handshake, error report)
+/// lives in [`crate::data::DataRequest`]; this wrapper only supplies the
+/// table's loading/rows callbacks.
 pub fn load_rows<D, Fut>(
     table: WeakEntity<TableState<D>>,
     error_title: SharedString,
@@ -83,46 +122,30 @@ pub fn load_rows<D, Fut>(
     D: Loadable + 'static,
     Fut: Future<Output = anyhow::Result<Vec<D::Row>>> + 'static,
 {
-    let Some(table) = table.upgrade() else {
-        return;
-    };
-    // Startup auto-load calls this for every panel while the server may
-    // still be down: skip silently (the panel reloads when the hub reports
-    // `Connected`, see `panels::reload_on_connect`) instead of stacking one
-    // error per panel into the message center.
-    let Ok(server) = crate::utils::state::AppState::server(cx) else {
-        tracing::debug!("{}: server is not connected", error_title);
-        return;
-    };
-    let generation = table.update(cx, |state, cx| {
-        let delegate = state.delegate_mut();
-        *delegate.loading_mut() = true;
-        *delegate.fetch_generation_mut() += 1;
-        cx.notify();
-        *delegate.fetch_generation_mut()
-    });
-
-    cx.spawn(async move |cx| {
-        let result = request(server).await;
-        table.update(cx, |state, cx| {
+    crate::data::DataRequest::new(table, error_title.clone()).run(
+        cx,
+        |state, cx| {
             let delegate = state.delegate_mut();
-            if *delegate.fetch_generation_mut() != generation {
-                // A newer fetch (or a delegate reset) started while this
-                // request was in flight; its outcome is obsolete.
-                return;
-            }
-            *delegate.loading_mut() = false;
-            match result {
-                Ok(rows) => *delegate.rows_mut() = rows,
-                Err(err) => {
-                    delegate.rows_mut().clear();
-                    message::error(error_title, err, cx);
-                }
-            }
+            *delegate.loading_mut() = true;
+            *delegate.fetch_generation_mut() += 1;
             cx.notify();
-        });
-    })
-    .detach();
+            Some(*delegate.fetch_generation_mut())
+        },
+        |state, generation| *state.delegate_mut().fetch_generation_mut() == generation,
+        request,
+        |state, _cx, _generation, rows| {
+            let delegate = state.delegate_mut();
+            *delegate.loading_mut() = false;
+            delegate.page_mut().last_error = None;
+            *delegate.rows_mut() = rows;
+        },
+        |state, _cx, _generation, err| {
+            let delegate = state.delegate_mut();
+            *delegate.loading_mut() = false;
+            delegate.rows_mut().clear();
+            delegate.page_mut().last_error = Some(format!("{err:#}").into());
+        },
+    );
 }
 
 /// A table whose columns stay in their declared order.
@@ -159,33 +182,25 @@ pub fn empty_view(text: SharedString, cx: &App) -> impl IntoElement {
         .child(text)
 }
 
-/// A calendar row's timestamp (epoch ms) shown in the viewer's local time
-/// (`MM-DD HH:MM`), shared by the economic and earnings delegates.
-pub fn format_ts_local(time_ms: i64) -> String {
-    match chrono::Local.timestamp_millis_opt(time_ms) {
-        chrono::LocalResult::Single(time) => time.format("%m-%d %H:%M").to_string(),
-        _ => String::new(),
-    }
+/// Centered muted hint carrying a fetch failure, for delegates that opt
+/// into rendering their [`DataPage`] error state in-table (the default is
+/// message-center only). Same shape as `empty_view`, in the danger tone.
+pub fn error_view(error: SharedString, cx: &App) -> impl IntoElement {
+    div()
+        .flex()
+        .justify_center()
+        .py_4()
+        .text_color(cx.theme().danger)
+        .child(error)
 }
 
-/// A calendar row's date (epoch ms) in the viewer's local time (`MM-DD`),
-/// for tables that only show the day part.
-pub fn format_date_local(time_ms: i64) -> String {
-    match chrono::Local.timestamp_millis_opt(time_ms) {
-        chrono::LocalResult::Single(time) => time.format("%m-%d").to_string(),
-        _ => String::new(),
-    }
-}
-
+/// The calendar delegates' local-time stamp formatting lives in
+/// [`crate::data::format`] (shared with the news rows).
+///
 /// A calendar row whose timestamp is in the future gets a subtle tinted
 /// background, so the upcoming side of the fetched window stands out. Shared
 /// by the economic and earnings delegates.
-pub fn tint_upcoming_row(
-    id: &'static str,
-    row_ix: usize,
-    time_ms: i64,
-    cx: &App,
-) -> Stateful<Div> {
+pub fn tint_upcoming_row(id: &'static str, row_ix: usize, time_ms: i64, cx: &App) -> Stateful<Div> {
     let row = div().id((id, row_ix));
     if time_ms > Utc::now().timestamp_millis() {
         row.bg(cx.theme().secondary)

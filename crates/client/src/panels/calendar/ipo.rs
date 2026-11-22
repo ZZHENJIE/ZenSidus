@@ -9,8 +9,6 @@ use gpui_kit::{
     div,
 };
 
-use protocol::{RpcRequestPayload, RpcResponsePayload};
-
 use crate::panels::{Panel, refresh_button};
 use crate::tr;
 use crate::utils::AppIcon;
@@ -50,12 +48,7 @@ impl Panel for IPOCalendarPanel {
         datatable::load_rows(
             entity,
             tr!("app.calendar.ipo.failed"),
-            |server| async move {
-                match server.rpc_checked(RpcRequestPayload::IpoCalendar).await? {
-                    RpcResponsePayload::IpoCalendar(items) => Ok(items),
-                    other => Err(anyhow::anyhow!("unexpected rpc response: {other:?}")),
-                }
-            },
+            |server| async move { crate::data::api::calendar::ipo(&server).await },
             cx,
         );
     }

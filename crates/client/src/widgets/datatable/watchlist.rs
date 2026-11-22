@@ -90,7 +90,8 @@ impl WatchlistDelegate {
         }
         // Drop history for symbols that left the group, so a long session of
         // group switches cannot grow the map without bound.
-        self.quotes.retain(|symbol, _| self.symbols.contains(symbol));
+        self.quotes
+            .retain(|symbol, _| self.symbols.contains(symbol));
     }
 
     pub fn apply_trade(&mut self, symbol: &str, price: f64, time: SharedString) -> bool {

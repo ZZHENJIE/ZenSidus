@@ -18,7 +18,6 @@ use gpui_kit::{
 use crate::panels::{Panel, refresh_button};
 use crate::tr;
 use crate::utils::AppIcon;
-use protocol::{RpcRequestPayload, RpcResponsePayload};
 use crate::utils::state::AppState;
 use crate::widgets::datatable::{self, EarningsDelegate};
 
@@ -110,17 +109,7 @@ impl EarningsCalendarPanel {
         datatable::load_rows(
             table,
             tr!("app.calendar.earnings.failed"),
-            move |server| async move {
-                match server
-                    .rpc_checked(RpcRequestPayload::EarningsCalendar {
-                        date: date.to_string(),
-                    })
-                    .await?
-                {
-                    RpcResponsePayload::EarningsCalendar(rows) => Ok(rows),
-                    other => Err(anyhow::anyhow!("unexpected rpc response: {other:?}")),
-                }
-            },
+            move |server| async move { crate::data::api::calendar::earnings(&server, date).await },
             cx,
         );
     }

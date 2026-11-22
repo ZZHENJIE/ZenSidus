@@ -24,7 +24,7 @@ use gpui_kit::{
     px,
 };
 
-use protocol::{RpcRequestPayload, RpcResponsePayload, SearchItem};
+use crate::data::api::SearchItem;
 
 use crate::tr;
 use crate::utils::message;
@@ -99,12 +99,7 @@ impl SearchSymbolState {
                 });
                 return;
             };
-            let result = server
-                .rpc_checked(RpcRequestPayload::Search {
-                    keyword: keyword.clone(),
-                    lang,
-                })
-                .await;
+            let result = crate::data::api::text::search(&server, keyword, lang).await;
 
             let Ok(Some(window_handle)) = this.update(cx, |state, cx| {
                 if state.generation != request_gen {
@@ -112,18 +107,9 @@ impl SearchSymbolState {
                 }
                 state.searching = false;
                 match result {
-                    Ok(RpcResponsePayload::Search(items)) => {
+                    Ok(items) => {
                         state.selected = (!items.is_empty()).then_some(0);
                         state.results = items;
-                    }
-                    Ok(other) => {
-                        state.results.clear();
-                        state.selected = None;
-                        message::error(
-                            tr!("app.notify.search_failed"),
-                            anyhow::anyhow!("unexpected rpc response: {other:?}"),
-                            cx,
-                        );
                     }
                     Err(err) => {
                         state.results.clear();

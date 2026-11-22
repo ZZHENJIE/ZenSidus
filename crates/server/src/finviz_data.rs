@@ -6,7 +6,7 @@ use anyhow::Context;
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, TimeZone};
 use chrono_tz::America::New_York;
 
-use protocol::{EconomicItem, EarningsItem};
+use protocol::{Cell, EarningsItem, EconomicItem, ScreenerExport};
 
 /// Convert a fetched economic export: every row's date/time cell becomes a
 /// millisecond timestamp; one unparsable cell fails the whole batch (the
@@ -68,6 +68,59 @@ pub fn economic_week_for_date(date: &str) -> anyhow::Result<economic::Parameter>
 
 fn snap_to_monday(d: NaiveDate) -> NaiveDate {
     d - Duration::days(d.weekday().num_days_from_monday() as i64)
+}
+
+/// 把筛选导出整表定型:表头原样,逐格解析数值([`parse_cell`])。
+pub fn screener_cells(result: anysdk::finviz_sdk::CSVResult) -> ScreenerExport {
+    ScreenerExport {
+        headers: result.headers,
+        rows: result
+            .rows
+            .into_iter()
+            .map(|row| row.into_iter().map(|text| parse_cell(&text)).collect())
+            .collect(),
+    }
+}
+
+/// 单元格定型(纯形状判定,不按列名):`-`/空/不可解析 → `None`,
+/// 其余剥掉 `$`/逗号/正负号后整串必须是个数,尾部 `%` 取百分号前的
+/// 数(`+5.04%` → 5.04),尾部 K/M/B 按千/百万/十亿折算(`2.589B`
+/// → 2.589e9)。`text` 永远保留导出原文,显示不重排。
+fn parse_cell(text: &str) -> Cell {
+    Cell {
+        text: text.to_string(),
+        value: numeric_value(text),
+    }
+}
+
+/// `[+-]?[$]?digits[,digits]*[.%|K|M|B]` 的整串匹配,失败即 `None`
+/// (`May 15`、`N/A`、`Yes` 都不是数)。
+fn numeric_value(raw: &str) -> Option<f64> {
+    let t = raw.trim();
+    if t.is_empty() || t == "-" {
+        return None;
+    }
+    let (sign, rest) = match t.strip_prefix('-') {
+        Some(rest) => (-1.0, rest),
+        None => (1.0, t.strip_prefix('+').unwrap_or(t)),
+    };
+    let rest = rest.strip_prefix('$').unwrap_or(rest).replace(',', "");
+
+    // 尾部单位:百分号 / 千 / 百万 / 十亿。其余必须是纯数字。
+    let (digits, factor) = match rest.chars().last()? {
+        '%' => (rest.strip_suffix('%')?, 1.0),
+        'K' | 'k' => (rest.strip_suffix(['K', 'k'])?, 1e3),
+        'M' | 'm' => (rest.strip_suffix(['M', 'm'])?, 1e6),
+        'B' | 'b' => (rest.strip_suffix(['B', 'b'])?, 1e9),
+        _ => (rest.as_str(), 1.0),
+    };
+    // 只收数字与点:挡掉 `--5`(剥符号后仍带负号)、`inf`/`NaN` 这类
+    // f64::parse 也会接受的形状——它们不是导出会出现的数。
+    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+
+    Some(sign * digits.trim().parse::<f64>().ok()? * factor)
 }
 
 /// Unix seconds for a US-Eastern wall-clock cell: `date` is `YYYY-MM-DD`,
@@ -229,5 +282,56 @@ mod tests {
         assert_eq!(rows[0].symbol, "AAPL");
         assert_eq!(rows[0].eps_surprise, Some(13.3));
         assert_eq!(rows[0].eps_gaap_estimate, None);
+    }
+
+    /// 单元格定型:后缀/百分号/货币/千分位折算成数值,原文保留。
+    #[test]
+    fn parse_cell_scales_suffixes_and_keeps_text() {
+        let cell = |raw: &str| parse_cell(raw);
+        // 后缀折算。
+        assert_eq!(cell("2.589B"), Cell::valued("2.589B", 2.589e9));
+        assert_eq!(cell("850.5M"), Cell::valued("850.5M", 8.505e8));
+        assert_eq!(cell("12.5K"), Cell::valued("12.5K", 12_500.0));
+        // 百分号取前面的数,正负号保留。
+        assert_eq!(cell("+5.04%"), Cell::valued("+5.04%", 5.04));
+        assert_eq!(cell("-4.43%"), Cell::valued("-4.43%", -4.43));
+        // 货币符与千分位剥除。
+        assert_eq!(cell("$142.55"), Cell::valued("$142.55", 142.55));
+        assert_eq!(cell("1,234,567"), Cell::valued("1,234,567", 1_234_567.0));
+        // 纯数(含负数)。
+        assert_eq!(cell("25.63"), Cell::valued("25.63", 25.63));
+        assert_eq!(cell("-0.54"), Cell::valued("-0.54", -0.54));
+        // 非数:原文保留、value 为 None。
+        assert_eq!(cell("-"), Cell::text("-"));
+        assert_eq!(cell(""), Cell::text(""));
+        assert_eq!(cell("May 15"), Cell::text("May 15"));
+        assert_eq!(cell("May 15 - May 19"), Cell::text("May 15 - May 19"));
+        assert_eq!(cell("N/A"), Cell::text("N/A"));
+        assert_eq!(cell("Yes"), Cell::text("Yes"));
+        // 防御:剥符号后仍带符号、inf/NaN、空单位、杂点都会被拒。
+        assert_eq!(cell("--5"), Cell::text("--5"));
+        assert_eq!(cell("inf"), Cell::text("inf"));
+        assert_eq!(cell("NaN"), Cell::text("NaN"));
+        assert_eq!(cell("%"), Cell::text("%"));
+        assert_eq!(cell("K"), Cell::text("K"));
+        assert_eq!(cell("1.2.3"), Cell::text("1.2.3"));
+    }
+
+    /// 整表定型:表头原样,行逐格转换。
+    #[test]
+    fn screener_cells_converts_whole_table() {
+        let result = anysdk::finviz_sdk::CSVResult {
+            headers: vec!["No.".into(), "Ticker".into(), "Market Cap".into()],
+            rows: vec![
+                vec!["1".into(), "AAPL".into(), "2.589B".into()],
+                vec!["2".into(), "TSLA".into(), "-".into()],
+            ],
+        };
+        let export = screener_cells(result);
+        assert_eq!(export.headers, ["No.", "Ticker", "Market Cap"]);
+        assert_eq!(export.rows[0][0], Cell::valued("1", 1.0));
+        assert_eq!(export.rows[0][1], Cell::text("AAPL"));
+        assert_eq!(export.rows[0][2], Cell::valued("2.589B", 2.589e9));
+        assert_eq!(export.rows[1][2], Cell::text("-"));
     }
 }

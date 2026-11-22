@@ -15,12 +15,13 @@ use std::{cell::Cell, rc::Rc};
 
 use chrono::Datelike as _;
 use gpui_kit::{
-    App, BorderStyle, Bounds, ContentMask, Edges, Element, ElementId, GlobalElementId, Hsla,
-    InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, ScrollDelta, ScrollEvent, ShapedLine, SharedString, Size, Style,
-    TextAlign, TextRun, Window, Entity, component::ActiveTheme as _, fill, point, px, quad, size,
-    transparent_black,
+    App, BorderStyle, Bounds, ContentMask, Edges, Element, ElementId, Entity, GlobalElementId,
+    Hsla, InspectorElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, ScrollDelta, ScrollEvent, ShapedLine, SharedString, Size, Style, TextAlign,
+    TextRun, Window, component::ActiveTheme as _, fill, point, px, quad, size, transparent_black,
 };
+
+use crate::data::format;
 
 use super::{
     scale,
@@ -79,13 +80,8 @@ impl Kline {
     }
 }
 
-impl IntoElement for Kline {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
-    }
-}
+// 0.10 起 gpui 为所有 Element 提供了 IntoElement 的 blanket 实现,
+// Kline 不再手写 impl IntoElement。
 
 /// 元素局部状态(生命周期跟随元素键):十字光标位置与拖拽锚点。都是
 /// 元素相对坐标;`None` = 未悬停 / 未拖拽。十字光标是纯呈现,不进状态实体。
@@ -129,7 +125,8 @@ impl Element for Kline {
         _: &mut Self::RequestLayoutState,
         _: &mut Window,
         _: &mut App,
-    ) {}
+    ) {
+    }
 
     fn paint(
         &mut self,
@@ -180,9 +177,7 @@ impl Element for Kline {
         // `paint_crosshair` 的坐标语义注释。
         let crosshair = interact.as_ref().map(|interact| {
             let mouse = window.mouse_position();
-            let next = bounds
-                .contains(&mouse)
-                .then(|| mouse - bounds.origin);
+            let next = bounds.contains(&mouse).then(|| mouse - bounds.origin);
             if interact.cursor.get() != next {
                 let visibility_flipped = interact.cursor.get().is_some() != next.is_some();
                 interact.cursor.set(next);
@@ -486,10 +481,10 @@ fn measure_axis_width(scale: &PriceScale, last_close: Option<f64>, window: &mut 
     for tick in &scale.ticks {
         measure(scale::format_price(*tick, scale.step), &mut max_w);
     }
-    measure(scale::format_quote(scale.min), &mut max_w);
-    measure(scale::format_quote(scale.max), &mut max_w);
+    measure(format::format_quote(scale.min), &mut max_w);
+    measure(format::format_quote(scale.max), &mut max_w);
     if let Some(close) = last_close {
-        measure(scale::format_quote(close), &mut max_w);
+        measure(format::format_quote(close), &mut max_w);
     }
     (max_w + TEXT_PAD * 2.).max(24.)
 }
@@ -669,11 +664,17 @@ impl Geometry {
         let grid = palette.grid;
         for &tick in &self.scale.ticks {
             let y = self.y_price(tick);
-            if y <= self.plot.origin.y.as_f32() || y >= self.plot.origin.y.as_f32() + self.price_h
-            {
+            if y <= self.plot.origin.y.as_f32() || y >= self.plot.origin.y.as_f32() + self.price_h {
                 continue;
             }
-            self.paint_h_line(window, y, self.plot.origin.x.as_f32(), self.plot_w(), grid, false);
+            self.paint_h_line(
+                window,
+                y,
+                self.plot.origin.x.as_f32(),
+                self.plot_w(),
+                grid,
+                false,
+            );
         }
         for (_, abs_ix) in self.time_ticks(frame) {
             let x = self.x_center(abs_ix as f32);
@@ -759,7 +760,14 @@ impl Geometry {
             return;
         }
         let color = palette.direction(latest.open, latest.close);
-        self.paint_h_line(window, y, self.plot.origin.x.as_f32(), self.plot_w(), color, true);
+        self.paint_h_line(
+            window,
+            y,
+            self.plot.origin.x.as_f32(),
+            self.plot_w(),
+            color,
+            true,
+        );
     }
 
     /// 右轴上的最新价价签(方向色底、面板底色字;不裁剪)。
@@ -791,7 +799,7 @@ impl Geometry {
             ),
             background: color,
             text_color: palette.background,
-            text: scale::format_quote(close),
+            text: format::format_quote(close),
         }
         .paint(window, cx);
     }
@@ -901,19 +909,17 @@ impl Geometry {
     }
 
     /// 十字线(裁剪在绘图区内)。
-    fn paint_crosshair_lines(&self, state: &CrosshairState, palette: &Palette, window: &mut Window) {
+    fn paint_crosshair_lines(
+        &self,
+        state: &CrosshairState,
+        palette: &Palette,
+        window: &mut Window,
+    ) {
         let plot_top = self.plot.origin.y.as_f32();
         let plot_left = self.plot.origin.x.as_f32();
         let cross_color = palette.text.opacity(0.4);
         self.paint_v_line(window, state.snap_x, plot_top, self.plot_h(), cross_color);
-        self.paint_h_line(
-            window,
-            state.y,
-            plot_left,
-            self.plot_w(),
-            cross_color,
-            true,
-        );
+        self.paint_h_line(window, state.y, plot_left, self.plot_w(), cross_color, true);
     }
 
     /// 右轴价签 + 底轴时间签(不裁剪)。
@@ -940,7 +946,7 @@ impl Geometry {
             ),
             background: palette.secondary,
             text_color: palette.secondary_text,
-            text: scale::format_quote(price),
+            text: format::format_quote(price),
         }
         .paint(window, cx);
 
@@ -951,8 +957,12 @@ impl Geometry {
             } else {
                 scale::format_ny_date(bar.time_ms)
             };
-            let line =
-                shape_line(text.clone().into(), AXIS_FONT_SIZE, palette.secondary_text, window);
+            let line = shape_line(
+                text.clone().into(),
+                AXIS_FONT_SIZE,
+                palette.secondary_text,
+                window,
+            );
             let tag_w = line.width().as_f32() + 8.;
             let tag_x = (state.snap_x - tag_w * 0.5)
                 .clamp(plot_left, (plot_right - tag_w).max(plot_left))
@@ -1012,15 +1022,15 @@ impl Geometry {
         let line = shape_runs(
             [
                 ("O ".to_string(), muted),
-                (scale::format_quote(bar.open), muted),
+                (format::format_quote(bar.open), muted),
                 ("  H ".to_string(), muted),
-                (scale::format_quote(bar.high), muted),
+                (format::format_quote(bar.high), muted),
                 ("  L ".to_string(), muted),
-                (scale::format_quote(bar.low), muted),
+                (format::format_quote(bar.low), muted),
                 ("  C ".to_string(), muted),
-                (scale::format_quote(bar.close), color),
+                (format::format_quote(bar.close), color),
                 ("  V ".to_string(), muted),
-                (scale::format_volume(bar.volume), muted),
+                (format::format_volume(bar.volume), muted),
             ],
             LEGEND_FONT_SIZE,
             window,
@@ -1082,7 +1092,9 @@ fn shape_line(text: SharedString, size: f32, color: Hsla, window: &mut Window) -
         underline: None,
         strikethrough: None,
     };
-    window.text_system().shape_line(text, px(size), &[run], None)
+    window
+        .text_system()
+        .shape_line(text, px(size), &[run], None)
 }
 
 /// 多色混排文本塑形(OHLCV 图例:标签弱化、收盘按方向着色)。

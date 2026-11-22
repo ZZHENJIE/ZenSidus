@@ -31,7 +31,11 @@ pub enum RpcRequestPayload {
     /// 标的搜索(futunn 代理)。
     Search { keyword: String, lang: String },
     /// 翻译(DeepSeek 代理)。
-    Translate { from: String, to: String, text: String },
+    Translate {
+        from: String,
+        to: String,
+        text: String,
+    },
     /// 经济日历:`date` 所在周(服务端吸附到周一、取 Mon–Fri 窗口)。
     EconomicCalendar { date: String },
     /// 财报日历:单个交易日。
@@ -105,11 +109,12 @@ pub struct SnapshotItem {
     pub prev_daily_bar: Option<Bar>,
 }
 
-/// Finviz 导出表:表头 + 行(单元格保留导出原文)。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Finviz 导出表:表头 + 行。单元格为 [`crate::screener::Cell`]
+/// (原文显示 + 解析出的数值,排序/筛选用数值)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScreenerExport {
     pub headers: Vec<String>,
-    pub rows: Vec<Vec<String>>,
+    pub rows: Vec<Vec<crate::screener::Cell>>,
 }
 
 /// 一条搜索建议。

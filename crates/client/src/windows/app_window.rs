@@ -56,7 +56,12 @@ pub fn titlebar_title(text: impl Into<SharedString>) -> impl IntoElement {
 /// shell. Concrete windows only implement content.
 pub trait AppWindow: Render + Sized {
     /// Build the window from its identity and persisted cache payload.
-    fn new(window: &mut Window, cx: &mut Context<Self>, window_type: WindowType, cache: serde_json::Value) -> Self;
+    fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        window_type: WindowType,
+        cache: serde_json::Value,
+    ) -> Self;
 
     /// Identity of this instance (instance ids included).
     fn window_type(&self) -> WindowType;
@@ -125,9 +130,7 @@ pub trait AppWindow: Render + Sized {
             gpui_kit::WindowBounds::Windowed(remembered_bounds)
         };
 
-        let root_view = std::rc::Rc::new(std::cell::RefCell::new(
-            None::<gpui_kit::Entity<Self>>,
-        ));
+        let root_view = std::rc::Rc::new(std::cell::RefCell::new(None::<gpui_kit::Entity<Self>>));
         let root_view_slot = root_view.clone();
         let weak_view_slot: std::rc::Rc<std::cell::RefCell<Option<gpui_kit::WeakEntity<Self>>>> =
             std::rc::Rc::new(std::cell::RefCell::new(None));
@@ -155,9 +158,10 @@ pub trait AppWindow: Render + Sized {
                     .borrow_mut()
                     .take()
                     .expect("window view was built");
-                let persist: std::rc::Rc<dyn Fn(&mut App)> = std::rc::Rc::new(move |cx: &mut App| {
-                    let _ = weak_view.update(cx, |this, cx| this.persist_dock_layout(cx));
-                });
+                let persist: std::rc::Rc<dyn Fn(&mut App)> =
+                    std::rc::Rc::new(move |cx: &mut App| {
+                        let _ = weak_view.update(cx, |this, cx| this.persist_dock_layout(cx));
+                    });
                 register_open_window(cx, window_type, handle.into(), root_view.into(), persist);
                 update_window_state(cx, window_type, |state| {
                     state.bounds = remembered_bounds;

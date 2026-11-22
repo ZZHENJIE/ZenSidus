@@ -12,31 +12,31 @@ use gpui_kit::{
     div,
 };
 
-use crate::widgets::datatable::{self, Loadable};
+use crate::data::format;
+use crate::widgets::datatable::{self, DataPage, Loadable};
 use crate::{tr, widgets::dialog::translate};
 
 /// A calendar week's rows; the fetch window is the current Monday–Friday.
 /// The row is the export item with its US-Eastern wall clock already
 /// resolved to unix seconds (see `utils::finviz`).
-pub(crate) type EconomicItem = protocol::EconomicItem;
+pub(crate) type EconomicItem = crate::data::api::EconomicItem;
 
 #[derive(Clone)]
 pub struct EconomicDelegate {
-    pub(crate) data: Vec<EconomicItem>,
-    pub(crate) is_loading: bool,
+    page: DataPage<EconomicItem>,
     /// The week the user picked in the calendar (its Monday); `None` = the
     /// current week.
     pub(crate) selected_week: Option<NaiveDate>,
-    fetch_generation: u64,
 }
 
 impl EconomicDelegate {
     pub fn new(data: Vec<EconomicItem>) -> Self {
         Self {
-            data,
-            is_loading: false,
+            page: DataPage {
+                rows: data,
+                ..Default::default()
+            },
             selected_week: None,
-            fetch_generation: 0,
         }
     }
 
@@ -60,16 +60,8 @@ impl EconomicDelegate {
 impl Loadable for EconomicDelegate {
     type Row = EconomicItem;
 
-    fn loading_mut(&mut self) -> &mut bool {
-        &mut self.is_loading
-    }
-
-    fn rows_mut(&mut self) -> &mut Vec<Self::Row> {
-        &mut self.data
-    }
-
-    fn fetch_generation_mut(&mut self) -> &mut u64 {
-        &mut self.fetch_generation
+    fn page_mut(&mut self) -> &mut DataPage<Self::Row> {
+        &mut self.page
     }
 }
 
@@ -79,7 +71,7 @@ impl TableDelegate for EconomicDelegate {
     }
 
     fn rows_count(&self, _: &App) -> usize {
-        self.data.len()
+        self.page.rows.len()
     }
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
@@ -87,7 +79,7 @@ impl TableDelegate for EconomicDelegate {
     }
 
     fn loading(&self, _cx: &App) -> bool {
-        self.is_loading
+        self.page.is_loading
     }
 
     /// Events that have not happened yet (timestamp is in the future) get a
@@ -98,7 +90,7 @@ impl TableDelegate for EconomicDelegate {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> Stateful<Div> {
-        let timestamp = self.data.get(row_ix).map(|row| row.time_ms);
+        let timestamp = self.page.rows.get(row_ix).map(|row| row.time_ms);
         match timestamp {
             Some(timestamp) if timestamp > Utc::now().timestamp_millis() => {
                 datatable::tint_upcoming_row("economic-row", row_ix, timestamp, cx)
@@ -132,10 +124,10 @@ impl TableDelegate for EconomicDelegate {
         _: &mut Window,
         _: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let row = &self.data[row_ix];
+        let row = &self.page.rows[row_ix];
 
         match col_ix {
-            0 => datatable::format_ts_local(row.time_ms).into_any_element(),
+            0 => format::format_ts_local(row.time_ms).into_any_element(),
             // The event title as a button tinted by the impact level: 1 =
             // success, 2 = warning, anything else = danger. Display only —
             // no action is wired yet.

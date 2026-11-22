@@ -1,8 +1,7 @@
 //! The calendar-family table delegates: the economic calendar, the earnings
-//! calendar and the IPO calendar. The shared row helpers
-//! ([`crate::widgets::datatable::format_ts_local`] and
-//! [`crate::widgets::datatable::tint_upcoming_row`]) live in the datatable
-//! root.
+//! calendar and the IPO calendar. The shared helpers live in the datatable
+//! root ([`crate::widgets::datatable::tint_upcoming_row`]) and the data
+//! layer ([`crate::data::format`] for the local-time stamps).
 
 pub mod earnings;
 pub mod economic;

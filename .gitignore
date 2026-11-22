@@ -1,3 +1,6 @@
 /target
 alpaca-docs
 crates/server/server.toml
+
+# ZCode 会话产物
+.zcode/

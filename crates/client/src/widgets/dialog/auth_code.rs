@@ -6,7 +6,7 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use gpui_kit::{
-    App, AnyWindowHandle, AppContext as _, Focusable as _, ParentElement as _, Styled as _, Window,
+    AnyWindowHandle, App, AppContext as _, Focusable as _, ParentElement as _, Styled as _, Window,
     base::v_flex,
     component::{
         WindowExt,
@@ -36,20 +36,17 @@ pub fn open_auth_code_dialog(
     let on_confirm: OnCode = Arc::new(on_confirm);
 
     // 填满最后一位即自动确认:此时值必为完整 6 位数字(OtpState 只收数字)。
-    cx.subscribe(
-        &otp,
-        {
-            let otp = otp.clone();
-            let on_confirm = on_confirm.clone();
-            move |_, event: &OtpEvent, cx| {
-                if let OtpEvent::Complete = event {
-                    let token = otp.read(cx).value().to_string();
-                    on_confirm(&token, cx);
-                    let _ = window_handle.update(cx, |_, window, cx| window.close_dialog(cx));
-                }
+    cx.subscribe(&otp, {
+        let otp = otp.clone();
+        let on_confirm = on_confirm.clone();
+        move |_, event: &OtpEvent, cx| {
+            if let OtpEvent::Complete = event {
+                let token = otp.read(cx).value().to_string();
+                on_confirm(&token, cx);
+                let _ = window_handle.update(cx, |_, window, cx| window.close_dialog(cx));
             }
-        },
-    )
+        }
+    })
     .detach();
 
     // Focus the OTP cells once, when the dialog layer is first built; later

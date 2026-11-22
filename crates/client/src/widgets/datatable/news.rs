@@ -7,17 +7,13 @@ pub mod stock;
 pub use market::MarketNewsDelegate;
 pub use stock::StockNewsDelegate;
 
-use chrono::Local;
+use crate::data::api::NewsItem;
 use gpui_kit::{App, ClickEvent, Window};
-use protocol::NewsItem;
 
-/// A news timestamp (epoch ms) shown as `MM-DD HH:MM` in the viewer's local
-/// time; shared by both delegates.
-pub(super) fn format_time(time_ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(time_ms)
-        .map(|time| time.with_timezone(&Local).format("%m-%d %H:%M").to_string())
-        .unwrap_or_default()
-}
+// The news timestamp formatter is the shared [`crate::data::format`]
+// helper (same `MM-DD HH:MM` shape); it stays callable as
+// `super::format_time` for the two delegates.
+pub(super) use crate::data::format::format_ts_local as format_time;
 
 /// Click behavior shared by the news delegates: plain click opens the
 /// headline in the translate dialog; Ctrl + click opens the article URL.

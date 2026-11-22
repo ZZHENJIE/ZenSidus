@@ -9,11 +9,11 @@ use tokio::sync::mpsc;
 use crate::finviz_data;
 use crate::state::AppState;
 use crate::web;
+use protocol::rpc::SearchItem;
 use protocol::{
-    Bar, EconomicItem, EarningsItem, Frame, NewsItem, RpcRequestPayload, RpcResponsePayload,
+    Bar, EarningsItem, EconomicItem, Frame, NewsItem, RpcRequestPayload, RpcResponsePayload,
     ScreenerExport, ScreenerParameter, SnapshotItem,
 };
-use protocol::rpc::SearchItem;
 
 /// 处理一个 RPC 请求。`rpc_id` 是请求 id(RestProgress 帧用它回填 req_id);
 /// `progress_tx` 是该会话的下行出口(bars 进度帧专用,有界通道,与推送同源)。
@@ -128,8 +128,12 @@ pub async fn handle(
             Ok(RpcResponsePayload::Snapshot(
                 map.into_iter()
                     .map(|(symbol, snapshot)| SnapshotItem {
-                        latest_trade: snapshot.latest_trade.map(|trade| trade_from_rest(symbol.clone(), trade)),
-                        latest_quote: snapshot.latest_quote.map(|quote| quote_from_rest(symbol.clone(), quote)),
+                        latest_trade: snapshot
+                            .latest_trade
+                            .map(|trade| trade_from_rest(symbol.clone(), trade)),
+                        latest_quote: snapshot
+                            .latest_quote
+                            .map(|quote| quote_from_rest(symbol.clone(), quote)),
                         minute_bar: snapshot.minute_bar.map(bar_from_rest),
                         daily_bar: snapshot.daily_bar.map(bar_from_rest),
                         prev_daily_bar: snapshot.prev_daily_bar.map(bar_from_rest),
@@ -158,32 +162,41 @@ pub async fn handle(
                 .screener(parameter)
                 .await
                 .map_err(rpc_error("market screener"))?;
-            Ok(RpcResponsePayload::MarketScreenerExport(
-                export_from_csv(result),
-            ))
+            Ok(RpcResponsePayload::MarketScreenerExport(export_from_csv(
+                result,
+            )))
         }
 
         RpcRequestPayload::Search { keyword, lang } => {
-            let items: Vec<SearchItem> =
-                web::search(&state.http, &keyword, &lang).await.map_err(rpc_error("search"))?;
+            let items: Vec<SearchItem> = web::search(&state.http, &keyword, &lang)
+                .await
+                .map_err(rpc_error("search"))?;
             Ok(RpcResponsePayload::Search(items))
         }
 
         RpcRequestPayload::Translate { from, to, text } => {
-            let text = web::translate(&state.http, &state.config.deepseek.api_key, &from, &to, &text)
-                .await
-                .map_err(rpc_error("translate"))?;
+            let text = web::translate(
+                &state.http,
+                &state.config.deepseek.api_key,
+                &from,
+                &to,
+                &text,
+            )
+            .await
+            .map_err(rpc_error("translate"))?;
             Ok(RpcResponsePayload::Translate(text))
         }
 
         RpcRequestPayload::EconomicCalendar { date } => {
-            let parameter = finviz_data::economic_week_for_date(&date).map_err(rpc_error("economic calendar"))?;
+            let parameter = finviz_data::economic_week_for_date(&date)
+                .map_err(rpc_error("economic calendar"))?;
             let items = state
                 .finviz
                 .economic_calendar(parameter)
                 .await
                 .map_err(rpc_error("economic calendar"))?;
-            let rows: Vec<EconomicItem> = finviz_data::economic_rows(items).map_err(rpc_error("economic calendar"))?;
+            let rows: Vec<EconomicItem> =
+                finviz_data::economic_rows(items).map_err(rpc_error("economic calendar"))?;
             Ok(RpcResponsePayload::EconomicCalendar(rows))
         }
 
@@ -254,10 +267,7 @@ fn trade_from_rest(
 }
 
 fn export_from_csv(result: anysdk::finviz_sdk::CSVResult) -> ScreenerExport {
-    ScreenerExport {
-        headers: result.headers,
-        rows: result.rows,
-    }
+    crate::finviz_data::screener_cells(result)
 }
 
 /// DTO → finviz 参数(`screener_type` 线值反解析)。
@@ -277,11 +287,7 @@ fn parameter_from_dto(dto: ScreenerParameter) -> anysdk::finviz_sdk::screener::P
 /// 无 `start` 时的默认起点:按 timeframe 的每根跨度 × limit 估算所需
 /// 跨度,再放大留出周末/节假日(日线及以上)与盘外休市(分钟周期)余量。
 /// 返回 RFC-3339(UTC)字符串,直接进 Alpaca 的 `start` 参数。
-fn bars_start_default(
-    timeframe: &str,
-    limit: u32,
-    now: chrono::DateTime<chrono::Utc>,
-) -> String {
+fn bars_start_default(timeframe: &str, limit: u32, now: chrono::DateTime<chrono::Utc>) -> String {
     let start = match parse_timeframe_minutes(timeframe) {
         // 分钟周期:limit×bucket 是"市场时间"分钟,按 390 分钟/交易日折算
         // 成交易日,×2 覆盖周末,再 +1 天余量。

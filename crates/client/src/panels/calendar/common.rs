@@ -2,8 +2,12 @@
 //! both ride a DatePicker in the tab title bar with the same pinning rules.
 
 use gpui_kit::{
-    Entity, IntoElement, SharedString, Styled as _, px,
-    component::{Sizable as _, date_picker::{DatePicker, DatePickerState}},
+    Entity, IntoElement, SharedString, Styled as _,
+    component::{
+        Sizable as _,
+        date_picker::{DatePicker, DatePickerState},
+    },
+    px,
 };
 
 /// The calendar panel's date picker, pinned to a fixed width. The picker's
@@ -16,5 +20,5 @@ pub(crate) fn pinned_date_picker(
     DatePicker::new(state)
         .small()
         .placeholder(placeholder)
-        .w(px(190.))
+        .w(px(120.))
 }

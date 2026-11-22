@@ -3,11 +3,15 @@
 //! rows update in place as quotes stream in.
 
 use gpui_kit::{
-    App, Context, Hsla, IntoElement, ParentElement as _, Styled as _, Window, px,
-    component::{ActiveTheme as _, table::{Column, TableDelegate, TableState}},
-    div,
+    App, Context, Hsla, IntoElement, ParentElement as _, Styled as _, Window,
+    component::{
+        ActiveTheme as _,
+        table::{Column, TableDelegate, TableState},
+    },
+    div, px,
 };
 
+use crate::data::format::format_size;
 use crate::tr;
 
 /// Which side of the spread the table renders — the price cell's color.
@@ -41,20 +45,10 @@ impl QuoteSideDelegate {
 
     /// Replace the row (a fresh quote on this side); missing fields render
     /// dashes.
-    pub fn set_row(
-        &mut self,
-        price: Option<f64>,
-        size: Option<i64>,
-        mpid: Option<String>,
-    ) -> bool {
-        let changed =
-            self.row.price != price || self.row.size != size || self.row.mpid != mpid;
+    pub fn set_row(&mut self, price: Option<f64>, size: Option<i64>, mpid: Option<String>) -> bool {
+        let changed = self.row.price != price || self.row.size != size || self.row.mpid != mpid;
         if changed {
-            self.row = QuoteRow {
-                price,
-                size,
-                mpid,
-            };
+            self.row = QuoteRow { price, size, mpid };
         }
         changed
     }
@@ -68,22 +62,6 @@ impl QuoteSideDelegate {
             QuoteSide::Ask => theme.chart_bearish,
         }
     }
-}
-
-/// `1,234,567` — sizes read better grouped.
-fn format_size(size: i64) -> String {
-    let digits = size.abs().to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    if size < 0 {
-        out.insert(0, '-');
-    }
-    out
 }
 
 impl TableDelegate for QuoteSideDelegate {

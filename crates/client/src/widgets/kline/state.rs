@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use protocol::Bar;
+use crate::data::api::Bar;
 
 use super::scale;
 
@@ -381,9 +381,7 @@ impl KlineState {
 
         let bucket = scale::bucket_start_ms(minute, bucket_minutes);
         let bucket_end = bucket + (bucket_minutes as i64) * 60_000;
-        let Some(aggregate) =
-            aggregate_bars(self.minutes.range(bucket..bucket_end), bucket)
-        else {
+        let Some(aggregate) = aggregate_bars(self.minutes.range(bucket..bucket_end), bucket) else {
             return false;
         };
 
@@ -394,9 +392,7 @@ impl KlineState {
                 self.rebuild_viewport();
                 true
             }
-            Some(time_ms)
-                if scale::bucket_start_ms(time_ms, bucket_minutes) == bucket =>
-            {
+            Some(time_ms) if scale::bucket_start_ms(time_ms, bucket_minutes) == bucket => {
                 let last = self.bars.last_mut().expect("checked above");
                 *last = aggregate;
                 true
@@ -441,10 +437,7 @@ impl KlineState {
 
     /// 回到最新(双击):右边缘钉在"最新 bar + 右侧留白"。
     pub fn pin_latest(&mut self) -> bool {
-        let right = self.clamp_right(
-            self.bars.len() as f32 + RIGHT_MARGIN,
-            self.viewport.span,
-        );
+        let right = self.clamp_right(self.bars.len() as f32 + RIGHT_MARGIN, self.viewport.span);
         if right == self.viewport.right_ix {
             return false;
         }
@@ -466,13 +459,10 @@ impl KlineState {
     /// 新 bar 追加后的视口维护:钉住最新则跟随右移,否则原位不动。
     fn trim_viewport(&mut self) {
         if self.is_following() {
-            self.viewport.right_ix = self.clamp_right(
-                self.bars.len() as f32 + RIGHT_MARGIN,
-                self.viewport.span,
-            );
-        } else {
             self.viewport.right_ix =
-                self.clamp_right(self.viewport.right_ix, self.viewport.span);
+                self.clamp_right(self.bars.len() as f32 + RIGHT_MARGIN, self.viewport.span);
+        } else {
+            self.viewport.right_ix = self.clamp_right(self.viewport.right_ix, self.viewport.span);
         }
     }
 
@@ -500,7 +490,11 @@ impl KlineState {
             return;
         };
         let cutoff = newest - MINUTE_RETENTION * 60_000;
-        let stale = self.minutes.range(..cutoff).map(|(k, _)| *k).collect::<Vec<_>>();
+        let stale = self
+            .minutes
+            .range(..cutoff)
+            .map(|(k, _)| *k)
+            .collect::<Vec<_>>();
         for key in stale {
             self.minutes.remove(&key);
         }
@@ -512,7 +506,11 @@ impl KlineState {
             return;
         };
         let cutoff = newest - DAY_RETENTION * 86_400_000;
-        let stale = self.days.range(..cutoff).map(|(k, _)| *k).collect::<Vec<_>>();
+        let stale = self
+            .days
+            .range(..cutoff)
+            .map(|(k, _)| *k)
+            .collect::<Vec<_>>();
         for key in stale {
             self.days.remove(&key);
         }
@@ -549,7 +547,11 @@ fn aggregate_bars<'a>(
         low,
         close,
         volume,
-        vwap: if volume > 0 { vwap_sum / volume as f64 } else { 0. },
+        vwap: if volume > 0 {
+            vwap_sum / volume as f64
+        } else {
+            0.
+        },
         trade_count,
     })
 }
@@ -641,12 +643,18 @@ mod tests {
     #[test]
     fn refresh_keeps_viewport_but_tracks_growth() {
         let mut state = KlineState::new(Timeframe::OneDay);
-        load(&mut state, (0..300).map(|i| bar(i as i64 * 86_400_000, 10.)).collect());
+        load(
+            &mut state,
+            (0..300).map(|i| bar(i as i64 * 86_400_000, 10.)).collect(),
+        );
         assert!(state.pan_by(-50.));
         assert!(!state.is_following());
         let right = state.viewport().right_ix;
 
-        load(&mut state, (0..310).map(|i| bar(i as i64 * 86_400_000, 10.)).collect());
+        load(
+            &mut state,
+            (0..310).map(|i| bar(i as i64 * 86_400_000, 10.)).collect(),
+        );
         assert_eq!(state.viewport().right_ix, right); // 不跟随:原位
         assert!(state.pin_latest());
         assert!(state.is_following());
@@ -656,7 +664,10 @@ mod tests {
     #[test]
     fn pan_clamps_to_bounds() {
         let mut state = KlineState::new(Timeframe::OneDay);
-        load(&mut state, (0..200).map(|i| bar(i as i64 * 86_400_000, 10.)).collect());
+        load(
+            &mut state,
+            (0..200).map(|i| bar(i as i64 * 86_400_000, 10.)).collect(),
+        );
         assert!(state.pan_by(-100_000.));
         assert_eq!(state.viewport().right_ix, state.viewport().span);
         assert!(state.pan_by(100_000.));
@@ -666,7 +677,10 @@ mod tests {
     #[test]
     fn zoom_keeps_anchor_index() {
         let mut state = KlineState::new(Timeframe::OneDay);
-        load(&mut state, (0..300).map(|i| bar(i as i64 * 86_400_000, 10.)).collect());
+        load(
+            &mut state,
+            (0..300).map(|i| bar(i as i64 * 86_400_000, 10.)).collect(),
+        );
         let vp = state.viewport();
         let anchor_frac = 0.25;
         let anchor_ix = vp.right_ix - vp.span + anchor_frac * vp.span;
@@ -816,7 +830,13 @@ mod tests {
         assert!(state.apply_daily_bar(day_bar(2026, 10, 30, 100.)));
         assert!(state.apply_daily_bar(day_bar(2026, 11, 2, 101.)));
         assert_eq!(state.bars().len(), 2);
-        assert_eq!(scale::ny_date(state.bars()[0].time_ms).to_string(), "2026-10-01");
-        assert_eq!(scale::ny_date(state.bars()[1].time_ms).to_string(), "2026-11-01");
+        assert_eq!(
+            scale::ny_date(state.bars()[0].time_ms).to_string(),
+            "2026-10-01"
+        );
+        assert_eq!(
+            scale::ny_date(state.bars()[1].time_ms).to_string(),
+            "2026-11-01"
+        );
     }
 }

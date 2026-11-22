@@ -16,8 +16,6 @@ use gpui_kit::{
     div, px,
 };
 
-use protocol::{RpcRequestPayload, RpcResponsePayload};
-
 use crate::tr;
 use crate::utils::settings::{self, LANGUAGES, language_label};
 use crate::utils::state::AppState;
@@ -203,25 +201,12 @@ fn fetch(
     cx.spawn(async move |cx| {
         let server = cx.update(|cx| AppState::server(cx));
         let result = match server {
-            Ok(server) => {
-                match server
-                    .rpc_checked(RpcRequestPayload::Translate {
-                        from: from.clone(),
-                        to: to.clone(),
-                        text: text.to_string(),
-                    })
-                    .await
-                {
-                    Ok(RpcResponsePayload::Translate(text)) => Ok(text),
-                    Ok(other) => Err(format!("unexpected rpc response: {other:?}")),
-                    Err(err) => Err(format!("{err:#}")),
-                }
-            }
+            Ok(server) => crate::data::api::text::translate(&server, from, to, text.to_string())
+                .await
+                .map_err(|err| format!("{err:#}")),
             Err(err) => Err(format!("{err:#}")),
         };
-        let result = result
-            .map(SharedString::from)
-            .map_err(SharedString::from);
+        let result = result.map(SharedString::from).map_err(SharedString::from);
 
         let _ = state.update(cx, |state, cx| {
             if state.generation != generation {

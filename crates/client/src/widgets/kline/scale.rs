@@ -1,5 +1,6 @@
-//! K 线组件的纯几何与格式化函数:价格刻度、时间桶、美东时间标签、量值
-//! 缩写。全部无状态、不触 GPUI,便于单测。
+//! K 线组件的纯几何与时间函数:价格刻度、时间桶、美东时间标签。全部
+//! 无状态、不触 GPUI,便于单测。(价格/量值等展示格式在
+//! [`crate::data::format`],全 UI 共用。)
 //!
 //! 时区:美东(America/New_York)是美股的交易所时区,日界、会话边界都按它
 //! 解释;桶对齐也在美东意义下成立——NY 的 UTC 偏移恒为整小时(只有凌晨
@@ -35,7 +36,12 @@ pub fn ny_date_ms(date: chrono::NaiveDate) -> i64 {
     date.and_hms_opt(0, 0, 0)
         .and_then(|ny_midnight| New_York.from_local_datetime(&ny_midnight).single())
         .map(|dt| dt.with_timezone(&Utc).timestamp_millis())
-        .unwrap_or_else(|| date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis())
+        .unwrap_or_else(|| {
+            date.and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp_millis()
+        })
 }
 
 /// 美东该交易日所在周的周一零点(周桶起点)。
@@ -132,29 +138,6 @@ pub fn decimals_for_step(step: f64) -> usize {
     decimals
 }
 
-/// 价格的图例格式:常规两位小数,低价股(< $1)保留四位。
-pub fn format_quote(price: f64) -> String {
-    if price.abs() < 1. {
-        format!("{:.4}", price)
-    } else {
-        format!("{:.2}", price)
-    }
-}
-
-/// 成交量缩写:1_234_567 → "1.23M",12_345 → "12.3K",< 1000 原样。
-pub fn format_volume(volume: i64) -> String {
-    let v = volume as f64;
-    if v.abs() >= 1e9 {
-        format!("{:.2}B", v / 1e9)
-    } else if v.abs() >= 1e6 {
-        format!("{:.2}M", v / 1e6)
-    } else if v.abs() >= 1e3 {
-        format!("{:.1}K", v / 1e3)
-    } else {
-        volume.to_string()
-    }
-}
-
 /// 时间轴刻度步长(单位:bar 数):按 "1-2-5" 阶梯取最小步长,保证相邻
 /// 刻度间距 ≥ `min_gap_px`。`body_w <= 0` 时退到 1。
 pub fn time_tick_step(body_w: f32, min_gap_px: f32) -> usize {
@@ -232,7 +215,10 @@ mod tests {
                 assert!((tick - want).abs() < 1e-9, "{tick} != {want}");
             }
         };
-        approx(&price_ticks(100., 110., 5), &[100., 102., 104., 106., 108., 110.]);
+        approx(
+            &price_ticks(100., 110., 5),
+            &[100., 102., 104., 106., 108., 110.],
+        );
         approx(&price_ticks(0., 0.9, 6), &[0., 0.2, 0.4, 0.6, 0.8]);
         assert!(price_ticks(5., 5., 5).is_empty());
     }
@@ -242,12 +228,6 @@ mod tests {
         assert_eq!(format_price(102., 2.), "102");
         assert_eq!(format_price(102.5, 0.5), "102.5");
         assert_eq!(format_price(102.25, 0.25), "102.25");
-    }
-
-    #[test]
-    fn quote_format_keeps_sub_dollar_precision() {
-        assert_eq!(format_quote(123.45), "123.45");
-        assert_eq!(format_quote(0.1234), "0.1234");
     }
 
     #[test]
@@ -261,15 +241,10 @@ mod tests {
         assert_eq!(ny_date(ny_week_start_ms(wed)).to_string(), "2026-11-16");
         assert_eq!(ny_date(ny_month_start_ms(wed)).to_string(), "2026-11-01");
         // 周一零点是美东午夜:桶起点当天(冬令时 UTC 05:00)。
-        assert_eq!(ny_date(ny_week_start_ms(wed)), ny_date(wed) - chrono::Duration::days(2));
-    }
-
-    #[test]
-    fn volume_abbreviates() {
-        assert_eq!(format_volume(999), "999");
-        assert_eq!(format_volume(12_345), "12.3K");
-        assert_eq!(format_volume(1_234_567), "1.23M");
-        assert_eq!(format_volume(2_500_000_000), "2.50B");
+        assert_eq!(
+            ny_date(ny_week_start_ms(wed)),
+            ny_date(wed) - chrono::Duration::days(2)
+        );
     }
 
     #[test]

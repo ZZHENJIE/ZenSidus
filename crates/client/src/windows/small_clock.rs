@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::data::api::EconomicItem;
 use chrono::TimeZone;
 use gpui_kit::{
     AsyncApp, Context, IntoElement, ParentElement, Render, Styled, WeakEntity, Window,
@@ -7,7 +8,6 @@ use gpui_kit::{
     component::{ActiveTheme as _, Icon, WindowExt, notification::Notification, spinner::Spinner},
     div,
 };
-use protocol::EconomicItem;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::error;
 
@@ -49,7 +49,10 @@ fn format_timestamp(timestamp: i64) -> String {
         _ => {
             error!(
                 "{}",
-                tr!("app.log.invalid_timestamp", timestamp = timestamp.to_string())
+                tr!(
+                    "app.log.invalid_timestamp",
+                    timestamp = timestamp.to_string()
+                )
             );
             return String::default();
         }
@@ -80,7 +83,13 @@ impl SmallClockWindow {
                 (chrono::Utc::now().timestamp_millis() + offset_ms + rtt_ms / 2) / 1000
             })
             .unwrap_or_else(|| {
-                error!("{}", tr!("app.log.network_time_failed", err = "no server clock sample".to_string()));
+                error!(
+                    "{}",
+                    tr!(
+                        "app.log.network_time_failed",
+                        err = "no server clock sample".to_string()
+                    )
+                );
                 chrono::Local::now().timestamp()
             });
         // Send the loaded event
@@ -101,19 +110,10 @@ impl SmallClockWindow {
     /// export covers every event the alert window can ever fire on (the
     /// server snaps the date to its Mon–Fri window).
     async fn calendar_task(tx: UnboundedSender<Event>, server: ServerClient) {
-        let date = chrono::Utc::now().date_naive().to_string();
-        match server
-            .rpc_checked(protocol::RpcRequestPayload::EconomicCalendar { date })
-            .await
-        {
-            Ok(protocol::RpcResponsePayload::EconomicCalendar(rows)) => {
+        let date = chrono::Utc::now().date_naive();
+        match crate::data::api::calendar::economic(&server, date).await {
+            Ok(rows) => {
                 let _ = tx.send(Event::Calendar(rows));
-            }
-            Ok(other) => {
-                error!(
-                    "{}",
-                    tr!("app.log.calendar_fetch_failed", err = format!("unexpected rpc response: {other:?}"))
-                );
             }
             Err(err) => {
                 error!(
@@ -164,7 +164,9 @@ impl SmallClockWindow {
             .calendar
             .iter()
             .filter(|item| {
-                now_ms < item.time_ms && now_ms + lead_ms > item.time_ms && item.impact >= min_impact
+                now_ms < item.time_ms
+                    && now_ms + lead_ms > item.time_ms
+                    && item.impact >= min_impact
             })
             .collect();
 

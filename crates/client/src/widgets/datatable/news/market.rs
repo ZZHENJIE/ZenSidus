@@ -6,7 +6,7 @@
 //! click opens the headline in the translate dialog; Ctrl + click opens the
 //! article URL.
 
-use protocol::NewsItem;
+use crate::data::api::NewsItem;
 use gpui_kit::{
     App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, Stateful,
     StatefulInteractiveElement as _, Styled as _, Window,
@@ -18,21 +18,20 @@ use gpui_kit::{
 };
 
 use crate::tr;
-use crate::widgets::datatable::Loadable;
+use crate::widgets::datatable::{DataPage, Loadable};
 
 #[derive(Clone)]
 pub struct MarketNewsDelegate {
-    pub(crate) data: Vec<NewsItem>,
-    pub(crate) is_loading: bool,
-    fetch_generation: u64,
+    page: DataPage<NewsItem>,
 }
 
 impl MarketNewsDelegate {
     pub fn new(data: Vec<NewsItem>) -> Self {
         Self {
-            data,
-            is_loading: false,
-            fetch_generation: 0,
+            page: DataPage {
+                rows: data,
+                ..Default::default()
+            },
         }
     }
 
@@ -63,13 +62,15 @@ impl MarketNewsDelegate {
     pub(crate) fn merge_articles(&mut self, incoming: Vec<NewsItem>) -> bool {
         let mut changed = false;
         for article in incoming {
-            if !self.data.iter().any(|row| row.id == article.id) {
-                self.data.push(article);
+            if !self.page.rows.iter().any(|row| row.id == article.id) {
+                self.page.rows.push(article);
                 changed = true;
             }
         }
         if changed {
-            self.data.sort_by_key(|row| std::cmp::Reverse(row.time_ms));
+            self.page
+                .rows
+                .sort_by_key(|row| std::cmp::Reverse(row.time_ms));
         }
         changed
     }
@@ -78,16 +79,8 @@ impl MarketNewsDelegate {
 impl Loadable for MarketNewsDelegate {
     type Row = NewsItem;
 
-    fn loading_mut(&mut self) -> &mut bool {
-        &mut self.is_loading
-    }
-
-    fn rows_mut(&mut self) -> &mut Vec<Self::Row> {
-        &mut self.data
-    }
-
-    fn fetch_generation_mut(&mut self) -> &mut u64 {
-        &mut self.fetch_generation
+    fn page_mut(&mut self) -> &mut DataPage<Self::Row> {
+        &mut self.page
     }
 }
 
@@ -97,7 +90,7 @@ impl TableDelegate for MarketNewsDelegate {
     }
 
     fn rows_count(&self, _: &App) -> usize {
-        self.data.len()
+        self.page.rows.len()
     }
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
@@ -105,7 +98,7 @@ impl TableDelegate for MarketNewsDelegate {
     }
 
     fn loading(&self, _cx: &App) -> bool {
-        self.is_loading
+        self.page.is_loading
     }
 
     fn render_loading(
@@ -132,8 +125,10 @@ impl TableDelegate for MarketNewsDelegate {
         _: &mut Context<TableState<Self>>,
     ) -> Stateful<Div> {
         let mut row = div().id(("market-news-row", row_ix));
-        if let Some(article) = self.data.get(row_ix) {
-            row = row.cursor_pointer().on_click(super::open_news_row(article.clone()));
+        if let Some(article) = self.page.rows.get(row_ix) {
+            row = row
+                .cursor_pointer()
+                .on_click(super::open_news_row(article.clone()));
         }
         row
     }
@@ -145,7 +140,7 @@ impl TableDelegate for MarketNewsDelegate {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let Some(article) = self.data.get(row_ix) else {
+        let Some(article) = self.page.rows.get(row_ix) else {
             return div().into_any_element();
         };
         let muted = cx.theme().muted_foreground;
@@ -164,7 +159,12 @@ impl TableDelegate for MarketNewsDelegate {
                 } else {
                     article.symbols.join(", ")
                 };
-                div().truncate().text_xs().text_color(muted).child(symbols).into_any_element()
+                div()
+                    .truncate()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(symbols)
+                    .into_any_element()
             }
             2 => div()
                 .truncate()

@@ -4,6 +4,7 @@
 
 rust_i18n::i18n!("locales", fallback = "en-us");
 
+pub mod data;
 pub mod panels;
 pub mod utils;
 pub mod widgets;

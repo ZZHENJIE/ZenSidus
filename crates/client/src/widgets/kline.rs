@@ -14,73 +14,59 @@
 //! - 实时:hub 的 `DailyBar`(日线)/ `MinuteBar/UpdatedBar`(分钟周期,
 //!   客户端聚合成所选周期)。
 
-use anyhow::anyhow;
 use gpui_kit::{
     App, SharedString, WeakEntity,
     component::menu::{PopupMenu, PopupMenuItem},
 };
 
-use protocol::{RpcRequestPayload, RpcResponsePayload};
-
 use crate::tr;
-use crate::utils::message;
-use crate::utils::state::AppState;
 
 mod element;
 mod scale;
 mod state;
+
+pub mod card;
 
 pub use element::Kline;
 pub use state::{KlineState, Timeframe};
 
 /// 拉取一个 K 线状态的 Bars 历史(标的与周期读自状态本身)。离线静默跳过
 /// (启动自动加载不进消息中心,连接建立后由调用方补载);响应代数不符即
-/// 丢弃;失败进消息中心。
+/// 丢弃(判定在状态实体的 set_history/fail_load 内);失败进消息中心。
 pub fn load_history(entity: WeakEntity<KlineState>, cx: &mut App) {
-    let Ok(server) = AppState::server(cx) else {
-        return;
-    };
-    let Some((symbol, timeframe, generation)) = entity
+    // 标的与周期先读出来(query 闭包进后台后拿不到实体上下文);这里与
+    // begin_load 之间无重入,两次读一致。
+    let Some((symbol, timeframe)) = entity
         .update(cx, |state, _| {
             let symbol = state.symbol().map(str::to_owned)?;
-            let timeframe = state.timeframe();
-            Some((symbol, timeframe, state.begin_load()))
+            Some((symbol, state.timeframe()))
         })
         .ok()
         .flatten()
     else {
         return;
     };
-    cx.spawn(async move |cx| {
-        let result = server
-            .rpc_checked(RpcRequestPayload::Bars {
-                symbols: vec![symbol.clone()],
-                timeframe: timeframe.as_str().to_string(),
-                start: None,
-                end: None,
-                limit: timeframe.history_limit(),
-            })
-            .await;
-        let outcome = match result {
-            Ok(RpcResponsePayload::Bars(map)) => Ok(map.get(&symbol).cloned().unwrap_or_default()),
-            Ok(other) => Err(anyhow!("unexpected rpc response: {other:?}")),
-            Err(err) => Err(err),
-        };
-        let _ = entity.update(cx, |state, cx| match outcome {
-            Ok(bars) => {
-                if state.set_history(generation, bars) {
-                    cx.notify();
-                }
-            }
-            Err(err) => {
-                if state.fail_load(generation) {
-                    cx.notify();
-                }
-                message::error(tr!("app.chart.load_failed"), err, cx);
-            }
-        });
-    })
-    .detach();
+    crate::data::DataRequest::new(entity, tr!("app.chart.load_failed")).run(
+        cx,
+        |state, _cx| Some(state.begin_load()),
+        // 代数检查在状态实体内部:过期响应静默丢弃。
+        |_state, _generation| true,
+        move |server| async move {
+            crate::data::api::bars::history(
+                &server,
+                symbol,
+                timeframe.as_str().to_string(),
+                timeframe.history_limit(),
+            )
+            .await
+        },
+        |state, _cx, generation, bars| {
+            state.set_history(generation, bars);
+        },
+        |state, _cx, generation, _err| {
+            state.fail_load(generation);
+        },
+    );
 }
 
 /// 菜单项文案:数值 + 单位词(本地化),如 "5 Minutes"/"5 分钟"、"1 Day"/"1 天"。

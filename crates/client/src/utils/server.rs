@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -74,8 +74,12 @@ impl ClockEstimate {
 
     /// 最新估计;`None` = 尚无样本。
     pub fn get(&self) -> Option<(i64, i64)> {
-        (self.valid.load(Ordering::Relaxed) == 1)
-            .then(|| (self.offset_ms.load(Ordering::Relaxed), self.rtt_ms.load(Ordering::Relaxed)))
+        (self.valid.load(Ordering::Relaxed) == 1).then(|| {
+            (
+                self.offset_ms.load(Ordering::Relaxed),
+                self.rtt_ms.load(Ordering::Relaxed),
+            )
+        })
     }
 }
 
@@ -169,18 +173,11 @@ impl ServerClient {
 
     /// 发起一次 RPC;响应(或连接丢失/离线错误)经返回的 future 送达。
     pub async fn rpc(&self, payload: RpcRequestPayload) -> Result<RpcResponsePayload, String> {
-        let id = self
-            .inner
-            .next_rpc_id
-            .fetch_add(1, Ordering::Relaxed);
+        let id = self.inner.next_rpc_id.fetch_add(1, Ordering::Relaxed);
         let (reply, rx) = oneshot::channel();
         self.inner
             .commands
-            .send(Command::Rpc {
-                id,
-                payload,
-                reply,
-            })
+            .send(Command::Rpc { id, payload, reply })
             .map_err(|_| "server client shut down".to_string())?;
         rx.await
             .map_err(|_| "server client shut down".to_string())?
@@ -192,9 +189,7 @@ impl ServerClient {
         &self,
         payload: RpcRequestPayload,
     ) -> anyhow::Result<RpcResponsePayload> {
-        self.rpc(payload)
-            .await
-            .map_err(|err| anyhow::anyhow!(err))
+        self.rpc(payload).await.map_err(|err| anyhow::anyhow!(err))
     }
 
     /// 实时行情消息(已映射回 anysdk 类型,`stream_dispatch` 直接消费)。
@@ -381,8 +376,12 @@ async fn run_session(
                         *session_token = None;
                         return SessionEnd::Rejected(tr!("app.log.auth_rejected").to_string());
                     }
-                    if let Some(Frame::Welcome { server_time_ms, session_token: fresh }) =
-                        frames.into_iter().find(|f| matches!(f, Frame::Welcome { .. }))
+                    if let Some(Frame::Welcome {
+                        server_time_ms,
+                        session_token: fresh,
+                    }) = frames
+                        .into_iter()
+                        .find(|f| matches!(f, Frame::Welcome { .. }))
                     {
                         // 轮换:服务端每次认证都下发新令牌,旧的立即作废。
                         *session_token = Some(fresh);

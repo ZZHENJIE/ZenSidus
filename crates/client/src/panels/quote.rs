@@ -10,48 +10,23 @@ use std::collections::BTreeSet;
 
 use anysdk::alpaca_stream::StockMessage;
 use gpui_kit::{
-    App, Context, Entity, EntityId, EventEmitter, FocusHandle, IntoElement, ParentElement as _,
-    Render, SharedString, Styled as _, Task, WeakEntity, Window,
+    App, Context, Entity, EventEmitter, FocusHandle, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _, WeakEntity, Window,
     base::dock::{PanelEvent, PanelInfo, PanelState},
     base::h_flex,
     component::button::Button,
     div,
 };
 
+use crate::data::stream::{BookSide, StreamConsumer, StreamHandle, Wish};
 use crate::panels::{Panel, panel_title};
 use crate::tr;
 use crate::utils::AppIcon;
-use crate::utils::state::stream_dispatch::{SharedSpec, StreamSpec, spawn_filter_stage};
-use crate::utils::state::{HubEvent, ServerStatus, AppState, SymbolWish};
+use crate::utils::state::ServerStatus;
 use crate::widgets::datatable::{self, QuoteSide, QuoteSideDelegate, table_render};
-use gpui_kit::component::table::TableState as DataTableState;
 use crate::widgets::dialog::open_search_symbol_dialog;
 use crate::widgets::icon_button;
-
-/// One side of the top of book: price, size and the exchange it rests on.
-#[derive(Clone, Default)]
-struct Side {
-    price: Option<f64>,
-    size: Option<i64>,
-    exchange: Option<String>,
-}
-
-impl Side {
-    /// Take a side from a quote; the price must be positive for the side to
-    /// mean anything (a zero price is the stream's "no quote on this side").
-    fn take(price: f64, size: i64, exchange: &str) -> Self {
-        let (price, size) = if price > 0.0 {
-            (Some(price), Some(size))
-        } else {
-            (None, None)
-        };
-        Self {
-            price,
-            size,
-            exchange: (price.is_some()).then(|| exchange.to_string()),
-        }
-    }
-}
+use gpui_kit::component::table::TableState as DataTableState;
 
 pub struct QuotePanel {
     focus_handle: FocusHandle,
@@ -64,12 +39,8 @@ pub struct QuotePanel {
     /// Whether this tab is the active one in its tab group. A hidden panel
     /// unsubscribes from the stream and resubscribes when shown again.
     active: bool,
-    subscriber: EntityId,
-    /// The filter the background drain stage applies, kept in step with
-    /// the selection and rules.
-    spec: SharedSpec,
-    /// Live message pump for the current connection.
-    pump: Option<Task<()>>,
+    /// The panel's stream subscription (wish, filter, pump, lifecycle).
+    stream: StreamHandle<Self>,
 }
 
 impl Panel for QuotePanel {
@@ -84,35 +55,6 @@ impl Panel for QuotePanel {
             .and_then(|value| value.as_str())
             .map(|s| s.to_ascii_uppercase());
 
-        let hub = cx.global::<AppState>().hub.clone();
-
-        // Connection status drives the message pump: connected attaches a
-        // fresh broadcast receiver, any other status cancels it and drops
-        // the quote (the last values are stale by then).
-        cx.subscribe(&hub, |this, hub, _: &HubEvent, cx| {
-            match hub.read(cx).status() {
-                ServerStatus::Connected => {
-                    this.set_connected(true, cx);
-                    this.refresh_pump(cx);
-                }
-                _ => {
-                    this.set_connected(false, cx);
-                    this.pump = None;
-                }
-            }
-        })
-        .detach();
-
-        // Release the stream subscription no matter how this panel dies.
-        let subscriber = cx.entity_id();
-        let release_hub = hub.clone();
-        cx.on_release(move |_, cx| {
-            release_hub.update(cx, |hub, _| {
-                hub.set_symbols(subscriber, SymbolWish::default())
-            });
-        })
-        .detach();
-
         let mut this = Self {
             focus_handle: cx.focus_handle(),
             symbol,
@@ -123,17 +65,69 @@ impl Panel for QuotePanel {
                 QuoteSideDelegate::new(QuoteSide::Ask)
             }),
             active: true,
-            subscriber,
-            spec: SharedSpec::default(),
-            pump: None,
+            stream: StreamHandle::new(cx),
         };
         this.sync_subscription(cx);
         // The stream may already be up: the panel can open after connect.
-        this.refresh_pump(cx);
+        this.stream.attach_pump(cx);
         this
     }
 
     fn refresh(_entity: WeakEntity<Self>, _cx: &mut App) {}
+}
+
+impl StreamConsumer for QuotePanel {
+    const STAGE: &'static str = "quote";
+
+    fn stream_handle(&mut self) -> &mut StreamHandle<Self> {
+        &mut self.stream
+    }
+
+    /// Mirror the stream status into the top of book: with the stream down
+    /// the last values are stale, and a quote view must not show them
+    /// (the tables fall back to empty-state dashes).
+    fn on_status(&mut self, status: &ServerStatus, cx: &mut Context<Self>) {
+        self.set_connected(matches!(status, ServerStatus::Connected), cx);
+    }
+
+    fn apply_batch(&mut self, messages: Vec<StockMessage>, cx: &mut Context<Self>) {
+        let Some(symbol) = &self.symbol else {
+            return;
+        };
+        let mut applied = false;
+        for message in messages {
+            let StockMessage::Quote(quote) = message else {
+                continue;
+            };
+            if !quote.symbol.eq_ignore_ascii_case(symbol) {
+                continue;
+            }
+            let BookSide {
+                price,
+                size,
+                exchange,
+            } = BookSide::take(quote.bid_price, quote.bid_size, &quote.bid_exchange);
+            self.bid_table.update(cx, |table, cx| {
+                if table.delegate_mut().set_row(price, size, exchange) {
+                    cx.notify();
+                }
+            });
+            let BookSide {
+                price,
+                size,
+                exchange,
+            } = BookSide::take(quote.ask_price, quote.ask_size, &quote.ask_exchange);
+            self.ask_table.update(cx, |table, cx| {
+                if table.delegate_mut().set_row(price, size, exchange) {
+                    cx.notify();
+                }
+            });
+            applied = true;
+        }
+        if applied {
+            cx.notify();
+        }
+    }
 }
 
 impl QuotePanel {
@@ -149,82 +143,14 @@ impl QuotePanel {
         } else {
             BTreeSet::new()
         };
-        *self.spec.write().expect("spec lock poisoned") = StreamSpec {
-            symbols: wanted.clone(),
-            quotes: true,
-            ..Default::default()
-        };
-        let hub = cx.global::<AppState>().hub.clone();
-        hub.update(cx, |hub, _| {
-            hub.set_symbols(
-                self.subscriber,
-                SymbolWish {
-                    symbols: wanted,
-                    trades: false,
-                    bars: false,
-                    quotes: true,
-                },
-            )
-        });
-    }
-
-    /// (Re)attach the broadcast-receiver pump, draining in batches: one
-    /// entity update per batch keeps the main thread cheap while other
-    /// panels' high-rate subscriptions fill the channel.
-    fn refresh_pump(&mut self, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().hub.clone();
-        let clock = hub.read(cx).clock();
-        let Some(rx) = hub.read(cx).stock_messages() else {
-            return;
-        };
-        let spec = self.spec.clone();
-        let (tx, mut rx_out) = tokio::sync::mpsc::channel(8);
-        cx.background_executor()
-            .spawn(spawn_filter_stage("quote", rx, spec, tx, clock))
-            .detach();
-        self.pump = Some(cx.spawn(async move |this, cx| {
-            while let Some(batch) = rx_out.recv().await {
-                if this
-                    .update(cx, |this, cx| this.apply_batch(batch, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        }));
-    }
-
-    fn apply_batch(&mut self, messages: Vec<StockMessage>, cx: &mut Context<Self>) {
-        let Some(symbol) = &self.symbol else {
-            return;
-        };
-        let mut applied = false;
-        for message in messages {
-            let StockMessage::Quote(quote) = message else {
-                continue;
-            };
-            if !quote.symbol.eq_ignore_ascii_case(symbol) {
-                continue;
-            }
-            let Side { price, size, exchange } =
-                Side::take(quote.bid_price, quote.bid_size, &quote.bid_exchange);
-            self.bid_table.update(cx, |table, cx| {
-                if table.delegate_mut().set_row(price, size, exchange) {
-                    cx.notify();
-                }
-            });
-            let Side { price, size, exchange } =
-                Side::take(quote.ask_price, quote.ask_size, &quote.ask_exchange);
-            self.ask_table.update(cx, |table, cx| {
-                if table.delegate_mut().set_row(price, size, exchange) {
-                    cx.notify();
-                }
-            });
-            applied = true;
-        }
-        if applied {
-            cx.notify();
-        }
+        self.stream.set_wish(
+            Wish {
+                symbols: wanted,
+                quotes: true,
+                ..Default::default()
+            },
+            cx,
+        );
     }
 
     /// Mirror the stream status into the top of book: with the stream down
@@ -292,19 +218,14 @@ impl gpui_kit::base::dock::Panel for QuotePanel {
         // cycles while hidden. Reactivating (or a later `Connected` event)
         // reattaches it.
         if active {
-            self.refresh_pump(cx);
+            self.stream.attach_pump(cx);
         } else {
-            self.pump = None;
+            self.stream.stop_pump();
         }
     }
 
     fn on_removed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let hub = cx.global::<AppState>().hub.clone();
-        let subscriber = self.subscriber;
-        hub.update(cx, |hub, _| {
-            hub.set_symbols(subscriber, SymbolWish::default())
-        });
-        self.pump = None;
+        self.stream.unsubscribe(cx);
     }
 }
 
