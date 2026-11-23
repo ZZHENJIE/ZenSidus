@@ -13,7 +13,6 @@ use std::collections::BTreeSet;
 
 use anysdk::alpaca_stream::StockMessage;
 use anysdk::alpaca_stream::stocks::BarMessage;
-use chrono::NaiveDate;
 use gpui_kit::{
     App, Context, Div, Hsla, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
     Window,
@@ -140,16 +139,11 @@ fn positive(value: f64) -> Option<f64> {
 #[serde(default)]
 struct Cache {
     params: LinkParams,
-    index_open_date: Option<NaiveDate>,
-    etf_open_date: Option<NaiveDate>,
 }
 
 pub struct ETFLinkCalcWindow {
     id: u32,
     params: LinkParams,
-    /// The trading days the opening prices were last anchored for.
-    index_open_date: Option<NaiveDate>,
-    etf_open_date: Option<NaiveDate>,
     /// Live top-of-book quotes; `None` per side while no quote has arrived
     /// (a one-sided quote is legal, e.g. at the opening auction).
     index_bid: Option<f64>,
@@ -199,8 +193,6 @@ impl AppWindow for ETFLinkCalcWindow {
         let mut this = Self {
             id: window_type.instance_id().unwrap_or(0),
             params: cache.params,
-            index_open_date: cache.index_open_date,
-            etf_open_date: cache.etf_open_date,
             index_bid: None,
             index_ask: None,
             etf_bid: None,
@@ -307,8 +299,6 @@ impl ETFLinkCalcWindow {
     fn cache_value(&self) -> serde_json::Value {
         serde_json::to_value(Cache {
             params: self.params.clone(),
-            index_open_date: self.index_open_date,
-            etf_open_date: self.etf_open_date,
         })
         .unwrap_or(serde_json::Value::Null)
     }
@@ -359,59 +349,46 @@ impl ETFLinkCalcWindow {
     /// Anchor the day's opening price from a daily bar. The stream delivers
     /// the two symbols' daily bars alongside their quotes (the hub always
     /// subscribes them), so the break prices work without the opens being
-    /// typed by hand. A side is only re-anchored on a day it has not been
-    /// anchored for yet: within the day a manual entry from the parameter
-    /// dialog wins over the bar, and a stale cached open from a previous
-    /// day cannot leak forward. The updated parameters persist right away,
-    /// same as [`Self::apply_params`].
+    /// typed by hand. Any positive open re-fills its side — the newest bar
+    /// wins over a manual entry (the dialog is the fallback, not the
+    /// authority). The updated parameters persist right away, same as
+    /// [`Self::apply_params`].
     fn apply_daily_bar(&mut self, bar: &BarMessage, cx: &mut Context<Self>) {
-        if self.anchor_open(&bar.symbol, bar.time.date_naive(), bar.open) {
+        if self.apply_open(&bar.symbol, bar.open) {
             let cache = self.cache_value();
             super::update_window_state(cx, self.window_type(), |state| state.cache = cache);
             cx.notify();
         }
     }
 
-    /// Date-gated open anchoring shared by the stream's daily bars and the
-    /// snapshot fetch: `date` must be *today* — the current trading day, not
-    /// a day the side has already been anchored for — and `open` must be
-    /// positive. The today requirement is what keeps a pre-open snapshot's
-    /// previous-session bar from being mistaken for today's anchor (before
-    /// the open it is the only bar the snapshot carries). Within the day a
-    /// manual entry from the parameter dialog wins over the bar (the gate
-    /// rejects the second anchor for the same date). Returns whether
-    /// anything changed. US daily bars carry their trading day in their UTC
-    /// timestamp, so the UTC date is the trading date for both sources.
-    fn anchor_open(&mut self, symbol: &str, date: NaiveDate, open: f64) -> bool {
-        if date != chrono::Utc::now().date_naive() {
-            return false;
-        }
+    /// Open auto-fill shared by the stream's daily bars and the snapshot
+    /// fetch: a positive open on a known symbol re-fills its side, whatever
+    /// day the bar is from (周末/盘前也能用上一交易日的开盘计算——有值就
+    /// 算)。Returns whether anything changed.
+    fn apply_open(&mut self, symbol: &str, open: f64) -> bool {
         let Some(open) = positive(open) else {
             return false;
         };
-        let (is_index, is_etf) = (
-            symbol.eq_ignore_ascii_case(&self.params.index_symbol),
-            symbol.eq_ignore_ascii_case(&self.params.etf_symbol),
-        );
-        let (already_anchored, side_open) = match (is_index, is_etf) {
-            (true, _) => (&mut self.index_open_date, &mut self.params.index_open),
-            (_, true) => (&mut self.etf_open_date, &mut self.params.etf_open),
-            _ => return false,
-        };
-        if *already_anchored == Some(date) {
-            return false;
+        if symbol.eq_ignore_ascii_case(&self.params.index_symbol) {
+            if self.params.index_open == open {
+                return false;
+            }
+            self.params.index_open = open;
+            true
+        } else if symbol.eq_ignore_ascii_case(&self.params.etf_symbol) {
+            if self.params.etf_open == open {
+                return false;
+            }
+            self.params.etf_open = open;
+            true
+        } else {
+            false
         }
-        *side_open = open;
-        *already_anchored = Some(date);
-        true
     }
 
     /// Pull both symbols' snapshots once (window opened or symbols changed)
-    /// and anchor the opens from the *current* daily bars. Before the open
-    /// the snapshot carries the previous session's bar, which the date gate
-    /// rejects — the break prices then stay blank until either the day's
-    /// first bar shows up or the opens are typed in the parameter dialog.
-    /// A failure stays in the log: the stream's bars still anchor later.
+    /// and fill the opens from the latest daily bars each snapshot carries.
+    /// A failure stays silent: the stream's bars still fill later.
     fn fetch_opens(&mut self, cx: &mut Context<Self>) {
         let symbols: Vec<String> = [&self.params.index_symbol, &self.params.etf_symbol]
             .into_iter()
@@ -433,14 +410,10 @@ impl ETFLinkCalcWindow {
             let _ = this.update(cx, |this, cx| {
                 let mut changed = false;
                 for snapshot in &snapshots {
-                    if let Some(bar) = &snapshot.daily_bar {
-                        let date = chrono::DateTime::from_timestamp_millis(bar.time_ms)
-                            .map(|time| time.date_naive());
-                        if let Some(date) = date
-                            && this.anchor_open(&snapshot.symbol, date, bar.open)
-                        {
-                            changed = true;
-                        }
+                    if let Some(bar) = &snapshot.daily_bar
+                        && this.apply_open(&snapshot.symbol, bar.open)
+                    {
+                        changed = true;
                     }
                 }
                 if changed {
@@ -464,23 +437,10 @@ impl ETFLinkCalcWindow {
         cx.notify();
     }
 
-    /// Whether the anchor pair is usable *today*: every side is either a
-    /// manual entry (no date — the parameter dialog asks the user to refresh
-    /// those each trading day) or was anchored for today. Auto anchors from
-    /// a previous session (a stale cache from Friday read on Monday) fail
-    /// this, so the breaks go blank instead of measuring against the wrong
-    /// day's open.
-    fn opens_current(&self) -> bool {
-        let today = chrono::Utc::now().date_naive();
-        let fresh = |date: Option<NaiveDate>| date.is_none() || date == Some(today);
-        fresh(self.index_open_date) && fresh(self.etf_open_date)
-    }
-
-    /// The two break prices an ETF quote level implies: (bid side, ask side).
+    /// The two break prices an ETF quote level implies: (bid side, ask
+    /// side). 有值就算——开盘价正数即参与计算( weekends / 盘前用上一
+    /// 交易日的开盘也可),非正数/无报价自然落回破折号。
     fn break_pair(&self, etf_price: Option<f64>) -> (Option<f64>, Option<f64>) {
-        if !self.opens_current() {
-            return (None, None);
-        }
         match etf_price {
             Some(price) => (self.params.break_bid(price), self.params.break_ask(price)),
             None => (None, None),

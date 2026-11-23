@@ -214,9 +214,9 @@ app:
     direction: ETF 方向
     long: 做多
     short: 做空
-    index_open: 当日指数开盘价
-    etf_open: 当日 ETF 开盘价
-    opens_desc: 这里填当日开盘价,每个交易日需更新
+    index_open: 指数开盘价
+    etf_open: ETF 开盘价
+    opens_desc: 计算所用开盘价——日线会自动回填,可随时手动修改
     index_offset: 指数偏移值
     long_short_offset: 多空偏移值
     offsets_desc: 偏移均可为负:指数偏移叠加到算出的指数价,多空偏移按方向加到 Bid 或 Ask 一侧

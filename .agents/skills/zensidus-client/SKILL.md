@@ -1,6 +1,6 @@
 ---
 name: zensidus-client
-description: 'Architecture, conventions and hard-won pitfalls of the ZenSidus client crate (crates/client): window management (AppWindow/DockWindow, singleton vs multi-instance, WindowRegistry, persistence, gpui-kit Root wrapper, the main-window quit dialog), the dock panel system (hand-written Panel trait with DataEntity/refresh, no macro), widgets/dialog + widgets/datatable conventions, Hub shared server subscriptions + ServerClient RPC/push, status bar/message center, settings persistence, i18n/theme. Use when touching any file under crates/client — adding windows or panels or dialogs, changing window open/close/persistence behavior, wiring server data into panels, or debugging "window not found", dialogs crashing the app, layouts not restoring, or settings being reset. For the server crate see the zensidus-server skill.'
+description: 'Architecture, conventions and hard-won pitfalls of the ZenSidus client crate (crates/client): window management (AppWindow/DockWindow, singleton vs multi-instance, WindowRegistry, persistence, gpui-kit Root wrapper, the main-window quit dialog), the dock panel system (hand-written Panel trait with DataEntity/refresh, no macro), the data layer (crates/client/src/data.rs: DataRequest fetch orchestration, data/api typed RPC queries, data/stream StreamHandle+NewsPump subscription encapsulation, data/format shared formatters — the panels'"'"' only data outlet; panels never touch protocol/ServerClient/hub), widgets/dialog + widgets/datatable conventions (DataPage, typed screener cells + column sorting), status bar/message center, settings persistence, i18n/theme. Use when touching any file under crates/client — adding windows or panels or dialogs, changing window open/close/persistence behavior, wiring server data into panels, or debugging "window not found", dialogs crashing the app, layouts not restoring, settings being reset, or "already being updated" reentrancy. For the server crate see the zensidus-server skill.'
 ---
 
 # ZenSidus Client (crates/client)
@@ -21,28 +21,54 @@ crates/client/src/
 ├── main.rs              # bootstrap → init_app → panels::init → windows::init →
 │                        # prompt_connect(lib.rs:主窗口已恢复且地址已配置时自动弹
 │                        # 动态码对话框;无启动自动连接)
+├── data.rs              # ★ 数据层入口(2026-11-23 重构,面板唯一数据出口):
+│                        # DataRequest<T> 拉取编排原语(离线静默跳过/代数防乱序/
+│                        # 失败自动进消息中心)+ server_client() 访问器。
+│                        # ⚠ 重入约束:run() 的 begin 阶段会同步 update 目标
+│                        # 实体——实体在自己的 update 周期内不能对自己 run
+│                        # (DataEntity=Self 的面板如 MarketScreener 走手写
+│                        # 编排:同步半段直接改字段,异步回写经 spawn)
+├── data/api/            # 类型化 RPC 查询(每域一文件:bars/calendar/news/
+│                        # screener/snapshot/text),一个查询 = 一个 pub fn,
+│                        # 只发请求+解包响应变体;DTO 全部在此重导出(调用方
+│                        # 不 import protocol)
+├── data/stream.rs       # 订阅封装:Wish(统一意愿:symbols/trades/quotes/bars
+│                        # + 规则字段)→ hub SymbolWish + 过滤 StreamSpec 派生;
+│                        # StreamHandle<T>(一个消费者一个句柄:hub 状态观察、
+│                        # 泵启停、退订、on_release 守卫全封装)+ StreamConsumer
+│                        # trait(STAGE/on_status/apply_batch);NewsPump+
+│                        # NewsConsumer(市场新闻推送泵);BookSide(quote 单侧
+│                        # price>0 规则);connected()/on_status_change()
+├── data/format.rs       # 共用展示格式化(ts/date/clock 本地时间、quote/volume/
+│                        # size、millions/dollars/signed_pct——后者待 server
+│                        # 强类型后删),带单测
 ├── panels.rs            # Panel trait(const NAME/ICON/TITLE_KEY + new(info) + refresh
 │                        # 静态钩子 + default_title)+ PanelSpec 总表 all()(驱动注册与
 │                        # 菜单)+ open_in_center(按名走 PanelRegistry)+ fresh::<P>
 │                        # + refresh_button;宏已删除,面板全部手写
 ├── panels/*.rs          # 面板本体(12 个;quote 单票行情=Bid/Ask 双表、trades 逐笔
 │                        # 成交表(时间列在最后)、chart=K 线面板(kline 组件 +
-│                        # 周期下拉 + 持久化)、screener/stock=Table|Chart Tabs
-│                        # (Chart 为虚拟滚动 K 线列表);experiment 仍为占位):
-│                        # 手写五件套脚手架;数据在 DataEntity delegate。
-│                        # MarketNews = HTTP 回填 + 面板自持 NewsStream
-│                        # (subscribe "*",泵随面板常驻)
+│                        # 周期下拉 + 持久化)、screener/stock=全行同宽分段开关
+│                        # Table|Chart(Chart 段内嵌周期下拉;Chart 为虚拟滚动
+│                        # K 线卡列表带竖向滚动条 + 列头数值排序);experiment
+│                        # 仍为占位):手写五件套脚手架;数据在 DataEntity delegate。
+│                        # 行情消费者实现 StreamConsumer(quote/trades/chart/
+│                        # watchlist/market-screener/ETF 窗口);RPC 表格走
+│                        # load_rows/DataRequest + data::api 查询
 ├── widgets/dialog/      # 跨窗口共用的对话框:open_*(window, cx, …) 入口(confirm 通用
 │                        # 确认 + dialog_footer / translate / search_symbol / screener_preset /
-│                        # auth_code 连接动态码,状态条 Popover 与设置页共用)
+│                        # auth_code 连接动态码,状态条 Popover 与设置页共用;
+│                        # translate/search 走 data::api::text)
 ├── widgets/kline.rs     # K 线图组件(纯自定义;chart 面板 + 筛选器 Chart 视图
 │                        # 共用;**全项目唯一自绘 Element**——其余 UI 一律 GPUI
 │                        # Kit 组件组合,不得新增自绘):state(KlineState 实体:
-│                        # bars/viewport/分钟桶聚合/日线聚合(周/月/年))、
+│                        # bars/viewport/分钟桶聚合/日线聚合(周/月))、
 │                        # element(自定义 Element 三阶段绘制+指针交互;
 │                        # wheel_zoom 开关、with_id 多实例)、
-│                        # scale(纯几何/刻度/美东标签,单测)、kline.rs 公共入口:
-│                        # load_history(Bars RPC,离线静默/代数防乱序)+
+│                        # scale(纯几何/刻度/美东标签,单测)、card(KlineCard:
+│                        # 列表用图表卡=ticker 名+Kline+Spinner)、
+│                        # kline.rs 公共入口:load_history(Bars RPC,经
+│                        # DataRequest,离线静默/代数防乱序)+
 │                        # timeframe_menu(扁平菜单,值后带单位词,单位切换处
 │                        # 分隔线)+ timeframe_item_label。周期 11 档:分
 │                        # 1/2/3/5/10/15/30、时 1/2/4、日/周/月(Alpaca 串透传)。
@@ -74,9 +100,11 @@ crates/client/src/
 ├── widgets/picker.rs    # StringPicker:watchlist 分组 / screener preset 共用的单选 Combobox 壳
 ├── widgets/datatable/   # TableDelegate 实现,按族分目录(calendar/{economic,earnings,ipo}、
 │                        # news/{stock,market}、screener/stock、watchlist)= 面板的
-│                        # DataEntity;Loadable + load_rows 统一"拉数据→loading→写回/
-│                        # 报错"(market 是例外:merge 语义,见其面板注释);
-│                        # measure_text 量宽给 fit_column
+│                        # DataEntity;Loadable(page_mut + 默认 load_rows 协作,
+│                        # 存储统一在 DataPage<Row>:rows/代数/loading/last_error)
+│                        # + load_rows(经 data::DataRequest)统一"拉数据→loading→
+│                        # 写回/报错"(market 是例外:merge 语义,见其面板注释);
+│                        # error_view 补齐三态;measure_text 量宽给 fit_column
 ├── widgets/menu/        # 标题栏下拉菜单(app / panels / windows)及其动作安装器
 ├── windows.rs           # WindowType/WindowState/WindowRegistry + 持久化 + 启动恢复
 │                        # + persist_open_windows(退出前批量回写几何,不 dump cache)
@@ -89,10 +117,11 @@ crates/client/src/
 │                        # general/server/market_screener/small_clock/logs
 ├── windows/custom.rs    # 自定义 dock 窗口(多开,center-only)
 ├── windows/small_clock.rs # 小时钟(单例,PopUp;网络时间走 AppState 的 tokio runtime)
-├── windows/etf_linkcalc.rs # ETF 联价器(多开):symbols/当日开盘价/倍数/两偏移公式 +
-│                        # 测试 + 窗口本体(实时 bid/ask 两行 + 四破点价,quotes 订阅,
-│                        # 设置按钮在标题栏 render_titlebar_right);参数确认即写
-│                        # cache(见"open/close 生命周期")
+├── windows/etf_linkcalc.rs # ETF 联价器(多开):symbols/开盘价/倍数/两偏移公式 +
+│                        # 测试 + 窗口本体(实时 bid/ask 两行 + 四破点价,quotes 订阅
+│                        # 经 StreamHandle,**有值就算——开盘价正数即参与计算,
+│                        # 无日期门**;snapshot/日线 bar 自动回填开盘价且覆盖手动
+│                        # 值,对话框是兜底;设置按钮在标题栏 render_titlebar_right)
 │                        # + etf_linkcalc/params_dialog.rs(窗口私有的参数对话框,不放 widgets/dialog)
 └── utils.rs             # app_dir + tr! 宏;utils/ 子模块:
                          # server(ServerClient:唯一对外 TCP 连接 + RPC)/
@@ -103,16 +132,30 @@ crates/client/src/
                          # logging / actions(OpenPanel{name} + Open* 窗口动作)
 ```
 
-数据层分工(2026-11 server 化后):**客户端唯一的对外连接是 `utils/server.rs` 的
-`ServerClient`**——一条到 server 的 TCP(`protocol` 帧格式,postcard),
-自带自动重连/心跳/RPC id 路由,推送帧映射回 anysdk 的 `StockMessage` 形状
-(`stream_dispatch` 级联不变)。hub 在 `utils/state/hub.rs`(`Hub`:
-`SymbolWish` 并集聚合 + 每次 `Connected` 重放订阅 + staleness 看门狗)。面板数据
-一律走 RPC:`server.rpc_checked(RpcRequestPayload::…)`,远程表格经
-`datatable::load_rows`(闭包拿 `ServerClient`)。旧 `utils/executor.rs` 三客户端、
-独立 `NewsStream`、`gateway_sdk` 已全部退役;Alpaca/Finviz/DeepSeek 凭据在
-**server 侧** `server.toml`,客户端只持一次性动态码(连接对话框输认证器上的 6 位码,
-30 秒过期;密钥 totp_secret 只在服务端配置,keyring 已于 2026-11 移除)。
+数据层分工(2026-11-23 重构后,**Refactoring.md 阶段 1 完成**):**面板/对话框
+的数据出口只有 `data/` 层**——panels/ 与 UI 组件禁止出现 `protocol::`、
+`ServerClient`、`AppState::hub`(守门 grep 零命中)。
+
+- **`data/api/`**:类型化 RPC 查询,一域一文件(bars/calendar/news/screener/
+  snapshot/text),每查询一个 `pub async fn(server: &ServerClient, …) -> Result`;
+  DTO(`Bar/NewsItem/EconomicItem/Cell/…`)全部在此重导出,调用方不 import
+  protocol。
+- **`data::DataRequest<T>`**:拉取编排原语——离线静默跳过(不置 loading 不报错,
+  启动自动加载等 `Connected` 补)、fetch-generation 防乱序、失败自动进消息中心。
+  `datatable::load_rows` 是它在表格上的薄包装;`DataEntity = Self` 的面板
+  (MarketScreener)不能用(见陷阱 10),走手写编排 + `data::server_client()`。
+- **`data/stream.rs`**:订阅封装。`Wish`(统一意愿)→ hub `SymbolWish` +
+  后台过滤 `StreamSpec` 双派生;`StreamHandle<T>` + `StreamConsumer` trait
+  (`STAGE/stream_handle/on_status/apply_batch`)封装全部 ~80 行泵生命周期
+  (hub 状态观察、过滤泵启停、退订、on_release 守卫);`NewsPump` +
+  `NewsConsumer` 承载市场新闻推送;`connected(cx)`/`on_status_change` 给
+  非流消费者用。
+- 底座不变:`utils/server.rs` 的 `ServerClient` 仍是唯一对外 TCP(自动重连/
+  心跳/RPC id 路由,推送帧映射回 anysdk `StockMessage`,`stream_dispatch`
+  过滤级联不变);hub 在 `utils/state/hub.rs`(`SymbolWish` 并集聚合 +
+  Connected 重放 + staleness 看门狗)。Alpaca/Finviz/DeepSeek 凭据在
+  **server 侧** `server.toml`,客户端只持一次性动态码(连接对话框输认证器上的
+  6 位码,30 秒过期;密钥 totp_secret 只在服务端配置,keyring 已于 2026-11 移除)。
 server 侧架构与部署见 `zensidus-server` 技能;上游 SDK 细节见 `anysdk` 技能。
 
 数据文件(`~/.zensidus/`):`settings.json`(全部状态:主题/语言/server 地址/
@@ -184,6 +227,9 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
 2. **判活与匹配语义**(见上,`same_kind` 家族 vs 精确 key 曾互串出两个 bug)
 3. **gpui 本 fork 的返回值与惯例不同**:
    - `AsyncApp::update(f) -> R`(不包 Result;失败 panic/日志)
+   - **区分两个 update 的返回**:`Entity::update`(先 upgrade 成强引用)返回
+     裸 `R`,可以裸语句收尾;`WeakEntity::update` 返回 `Result<R>`(泵循环里
+     `.is_err()` 判实体死亡)。混着写要么漏处理 Err 要么多余 `let _ =`
    - `WeakEntity::update -> Result<R>`;`App::open_window -> anyhow::Result`
    - `App::defer(f)` 存在且是 Effect;`cx.spawn` 是 `boxed_local`(不要求 Send)
    - 全局读取没有 `Global::global(cx)`,是 `ReadGlobal` trait
@@ -194,6 +240,9 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
    - `gen` 是 edition 2024 保留关键字,不能当字段/变量名
    - `rust_i18n::locale()` 返回 `impl Deref<Target=str>`,`.as_str()` 走到
      str 的不稳定方法;用 `let locale = …; Lang::from(&*locale)`
+   - **gpui-kit 0.10 起 `IntoElement` 对所有 `Element` 有 blanket 实现**:
+     自定义 Element **不要手写** `impl IntoElement`(E0119 冲突),直接删掉
+     手写实现即可
 4. **Settings 反序列化是全有或全无**:旧 settings.json 解析失败 →
    `Settings::load` Err → **整个配置回退默认值**(主题/语言/Key 全丢)。
    现在 `Settings` 及所有嵌套结构都是**结构级 `#[serde(default)]`**(缺字段
@@ -235,6 +284,15 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
    GPUI 窗口只读首字符('Z');主窗口几何在副屏负坐标区时 `SetCursorPos`
    静默失败、点击全部落空。**UI 上能看到的测试由用户手动做,自动化只做
    启动 + 截图验证渲染,交互测试给编号步骤清单**
+10. **实体在自己 update 周期内不能 update 自己**(entity_map.rs
+   "already being updated" 直接 panic,2026-11-23 实测):`DataRequest::run`
+   的 begin 阶段会同步 update 目标实体,所以在观察者回调/`refresh` 钩子
+   (`entity.update(|this| this.fetch())`)里对一个 `DataEntity = Self` 的
+   面板跑 `DataRequest` 就是自重重入。判据:目标实体 ≠ 当前 update 中的
+   实体——表面板的目标是 `TableState`(不同实体,安全);`DataEntity = Self`
+   的面板(MarketScreener)fetch 走手写编排:同步半段直接改字段(`&mut self`
+   在手),异步回写经 `cx.spawn`(见 `panels/screener/market.rs::fetch`
+   顶部注释)
 
 ## 面板系统(宏已删除,全部手写)
 
@@ -270,13 +328,22 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
   **启动时 server 未连接 = 静默跳过**(不发请求、不进消息中心),表格面板
   在 `new` 里再接一行 `crate::panels::reload_on_connect::<Self>(table.downgrade(), cx)`,
   连接建立(含重连)后自动补一次加载
-- **远程表格统一走 `datatable::load_rows(table, error_title, |http| async {…}, cx)`**:
-  delegate 实现 `Loadable`(`type Row` + `loading_mut` + `rows_mut`),helper
-  负责置 loading → spawn → 写回 rows 或 clear+`message::error`;
-  **离线时 helper 静默 return**(不置 loading、不报错)。`render_loading`/
-  `render_empty` 用 `datatable::loading_view()` / `empty_view(text, cx)`
+- **远程表格统一走 `datatable::load_rows(table, error_title, |server| async {…}, cx)`**:
+  delegate 实现 `Loadable`(`type Row` + `page_mut`,存储在
+  `DataPage<Row>`——rows/代数/loading/last_error,后两者有默认协作方法),
+  helper 是 `data::DataRequest` 的表格包装:置 loading → spawn → 写回 rows 或
+  clear + `message::error`;**离线时静默 return**(不置 loading、不报错)。
+  `render_loading`/`render_empty`/错误态用 `datatable::loading_view()` /
+  `empty_view(text, cx)` / `error_view(err, cx)`(错误态默认只进消息中心,
+  last_error 仅记录)
 - **列头本地化(语言切换即时生效)两个条件缺一不可**:`column()` **实时 `t!` 生成** Column(Watchlist/IPO/StockNews/Economic 模式;把 `t!` 快照进 `columns` 字段则切换后仍是旧串)+ 面板注册 `observe_global_in::<AppState>`(数据不依赖 settings 的面板 observer 只 `cx.notify()`)。Screener 表头来自 CSV 数据本身,语言无关
-- **动态列表格**(如 StockScreener 的 CSV 导出):headers → Column,行存原始字符串;**换列后必须 `TableState::refresh(cx)`**(列组是构造时快照,见陷阱);双击列宽适配走 `fit_column` → `datatable::measure_text`
+- **动态列表格**(StockScreener 的 CSV 导出):headers → Column(`.sortable()`),
+  行是**强类型 Cell**(`data::api::Cell { text, value }`——server 定型,text
+  保原文显示,value 是解析数值(K/M/B/% 折算));列头三态点击排序走
+  `perform_sort` → `sort_rows`(数值列按 value、无值沉底、纯文本列按 text,
+  Default 恢复 Finviz 原序,原始行序存 `unsorted`);**换列后必须
+  `TableState::refresh(cx)`**(列组是构造时快照,见陷阱);双击列宽适配走
+  `fit_column` → `datatable::measure_text`
 - **数据下沉**:TableDelegate 等数据实现放 `widgets/datatable/`,目录与
   `panels/` 同构(族根只做声明 + re-export):`calendar/{economic,earnings,ipo}.rs`、
   `news/{stock,market}.rs`、`screener/stock.rs`,独立面板平铺(`watchlist.rs`)。
@@ -307,13 +374,17 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
   滚轮必须让位给列表滚动;列表本身要 `track_scroll(&handle)` + `flex_1().min_h_0()`
   才会响应滚轮并限制视口高度
 - **股票筛选器 Chart 视图**(panels/screener/stock.rs):`v_virtual_list`
-  纵向列表,每项 260px(ticker 名 + K 线卡);回调只收到可见范围——渲染
+  纵向列表(外包 Div 挂 `vertical_scrollbar`),每项 260px 的 `KlineCard`
+  (widgets/kline/card.rs:ticker 名 + Kline/Spinner);回调只收到可见范围——渲染
   按需,拉取也按需(`defer_in` 出帧后 `ensure_charts`:懒建
   `KlineState::new(tf)` + `set_symbol(ticker)` + `kline::load_history`)。
   卡片必须 `w_full`(虚拟列表条目宽度按"测量条目 0"推断,无显式宽度退化成
   内容宽 → plot_w=0 → clamp panic,见 kline 条目);结果 header 无 Ticker 列
-  → Chart tab 不渲染并回落 Table;结果集/周期变化 → 清空全部图表状态重建;
-  bars 为空的卡显示 Spinner;离线创建的卡在连接建立后自动重拉(hub 订阅)
+  → Chart 分段不渲染并回落 Table;结果集/周期变化 → 清空全部图表状态重建;
+  bars 为空的卡显示 Spinner;离线创建的卡在连接建立后自动重拉(status 订阅)。
+  顶部的 Table|Chart 开关是**全行同宽手写分段控件**(segment_cell:同款
+  tab_bar_segmented 令牌,激活段 pill 用 theme().secondary;Chart 段内嵌
+  周期下拉——Tab 组件装不下下拉,别改回 TabBar)
 
 ## 全局数据与消息
 
@@ -331,27 +402,30 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
   (2026-11-09 起统一:**全 crate 只用 `tr!`,不要 `use rust_i18n::t`**——
   返回类型直接是文本槽位要的 `SharedString`,免 `.to_string()/.into()` 拼接)
   (gpui-kit 所有文字槽位的类型);需要 `String` 做拼接时才用 `t!(..).to_string()`
-- **凭据守卫**:RPC 消费方的在线守卫是 `AppState::server(cx) -> Result<ServerClient>`
-  (server 未连接即 Err;`panels::news::server_rpc` 把它压成 `None`——离线
-  静默跳过,2026-11 起离线 RPC 一律不进消息中心);`ServerStatus::{label(),
-  reason(), color(cx)}` 是状态条与设置页共用的展示映射
+- **凭据守卫**:RPC 消费方的在线守卫统一在 data 层——`DataRequest`/`load_rows`
+  内置离线静默跳过(2026-11 起离线 RPC 一律不进消息中心);手写编排的兜底
+  是 `data::server_client(cx) -> Result<ServerClient>`(对话框等错误内联展示
+  的场景)。`ServerStatus::{label(), reason(), color(cx)}` 是状态条与设置页
+  共用的展示映射
 - **MessageLog**(utils/message.rs,Global):`message::{error,warning,info,success}`
   推送即通知 `observe_global::<MessageLog>` 观察者(状态栏/主窗口零接线);
   状态栏左侧显示 `last()`,点击弹 `latest_first()` 历史 Popover。
   **Hub 连接成败会自动推 success/error 消息**
 - **Hub**(utils/state/hub.rs,Entity 挂在 AppState;2026-11 起替代
-  旧 AlpacaHub 直连 Alpaca WS):
+  旧 AlpacaHub 直连 Alpaca WS;面板侧经 `data/stream.rs` 的 `StreamHandle`
+  消费,不直接碰 hub——守门规则):
   - 应用级唯一 server 连接(ServerClient,utils/server.rs);`set_symbols(EntityId,
     SymbolWish)` 按订阅者记录意愿(symbols + trades/quotes/bars 三档),**只把并集的增减
     发给 server**(trades 意愿 → TRADES|DAILY,quotes 意愿 → QUOTES,bars 意愿 →
     BARS=分钟/更新 bar;筛选器图表视图在分钟周期时置 bars)——两个面板
-    同看 NVDA 只订一次
+    同看 NVDA 只订一次。server 侧 fan_out 按订阅符号纯路由(见
+    zensidus-server 技能),客户端过滤级联(stream_dispatch)保留作双保险
   - **订阅重放在 hub**:ServerClient 自己自动重连(指数退避)但不保存订阅意愿,
     hub 监听其 `status()` 广播,每次 `Connected`(首连与重连)重发两个并集;
     `Failed(reason)`(动态码被拒 AuthFail 等永久错误)→ Failed + teardown
-  - 分发不经 hub:面板各自 `hub.stock_messages()` 拿 broadcast 接收端(已是
-    anysdk `StockMessage` 形状,由 ServerClient 从协议帧映射),`cx.spawn` 循环
-    recv 按自己的 symbols 过滤;RPC 走 `server.rpc_checked(...)`
+  - 分发不经 hub:消费面板各自经 `StreamHandle` 的过滤泵拿批量
+    `StockMessage`(已是 anysdk 形状,由 ServerClient 从协议帧映射),
+    实现自己的 `apply_batch`;RPC 走 `data::api` 查询
   - **staleness 看门狗保留**:数据流在流而最新交易所时间戳落后本地钟 >15s →
     `server.force_reconnect()` 换新路由(订阅经 Connected 重放)
   - 连接入口 = **启动自动弹出**(prompt_connect,地址已配置时)/ 状态条色点 Popover / 设置页按钮 → **动态码对话框**
@@ -411,7 +485,10 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
 `dump` 写 `PanelInfo::Panel(json!())`、`new` 读 info;需要数据表 → delegate
 放 `widgets/datatable/`(日历/新闻/筛选器族的进对应族子目录并在族根声明,
 独立面板平铺)、实现 `Loadable`、`type DataEntity = TableState<D>`、
-`refresh` 里调 `load_rows`;需要隐藏退订 → 覆写 `set_active`;最后在
+`refresh` 里调 `load_rows`(查询用 `data::api::*`,别碰 protocol);需要行情流 →
+实现 `StreamConsumer`(STAGE/stream_handle/apply_batch,字段放
+`StreamHandle<Self>`,offline/激活语义全在句柄里);需要隐藏退订 → 覆写
+`set_active`(set_wish 空 wish + stop_pump);最后在
 `panels::all()` 加一行——注册与打开动作自动跟上;菜单在
 `widgets/menu/panels.rs` 补一行(族内条目用 `app.menu.item.*` 短标签)。
 
@@ -433,7 +510,8 @@ title / dock_name / default_bounds / window_options / init 的 match 分支
 `OpenX` 动作 + `widgets/menu/windows.rs` 加菜单项与 `on_action`。
 
 **测试入口**:自动化测试在 `cargo test -p client --lib`(settings 往返、i18n 一致
-性)与 `cargo test -p server`(finviz 行换算/周窗口);对话框/搜索等交互目前
+性、data/format 格式化、筛选器排序语义)与 `cargo test -p server`(finviz 行
+换算/周窗口/筛选单元格定型/hub 路由判定);对话框/搜索等交互目前
 手动验证,正式入口以后做在标题栏菜单。
 
 **i18n**:key 加进 `locales/en-us.yml` 和 `zh-cn.yml` 各一份,两份文件分节

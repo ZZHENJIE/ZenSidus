@@ -18,26 +18,30 @@ crates/server/src/
 ├── config.rs     # server.toml 反序列化(listen/totp_secret/log_level/alpaca/finviz/
 │                 # deepseek/proxy);真实文件 gitignored,样例 server.toml.example
 ├── state.rs      # AppState:client_id 分配 / apply_diff(HubDiff → 上游订阅命令)/
-│                 # fan_out(Frame 广播到全部会话)/ spawn(上游泵:anysdk 消息
-│                 # → mapping → fan_out;上游命令走 mpsc)
+│                 # fan_out(纯路由:Quote/Trade/Bar 按 hub 订阅表只发给订阅了
+│                 # 该符号对应通道的客户端,News 广播;server 只做数据分发,
+│                 # 无行情计算)/ spawn(上游泵:anysdk 消息 → mapping → fan_out;
+│                 # 上游命令走 mpsc)
 ├── session.rs    # 每连接一个 task:Hello 验凭据(TOTP ±1 窗口,或会话令牌;
 │                 # 不符回 AuthFail 后断开)→ Welcome 对时+轮换下发令牌 →
 │                 # 心跳(客户端 10s Ping,60s 无帧判死)→ Subscribe/Unsubscribe
 │                 # → RPC 帧转 rpc::handle;单客户端失败不影响其他会话
-├── hub.rs        # SubscriptionHub:per-client 意愿(symbol+Channels)→ 上游并集
-│                 # (引用计数),apply_subscribe/apply_unsubscribe/remove_client
-│                 # 返回 HubDiff;纯逻辑,测试锚定并集/去重/引用计数行为
+├── hub.rs        # SubscriptionHub:per-client 意愿(符号键大写归一,symbol+Channels)
+│                 # → 上游并集(引用计数),apply_subscribe/apply_unsubscribe/
+│                 # remove_client 返回 HubDiff;subscribed(client,symbol,channels)
+│                 # 是 fan_out 路由的查表判定;纯逻辑,测试锚定并集/去重/引用计数
 ├── rpc.rs        # RPC id 路由 + handlers:bars(带 RestProgress 进度帧)/news
-│                 # 回填/日历族/screener 导出/搜索/翻译/snapshot;错误统一
-│                 # rpc_error(what) 字符串
+│                 # 回填/日历族/screener 导出(经 finviz_data::screener_cells 定型)/
+│                 # 搜索/翻译/snapshot;错误统一 rpc_error(what) 字符串
 ├── mapping.rs    # anysdk StockMessage/NewsMessage → protocol Frame(纯函数 +
 │                 # 测试;Quote/Trade/Bar 条件位与 tape 处理)
 ├── executor.rs   # ReqwestExecutor(HttpExecutor<reqwest::Client> 唯一实现)+
 │                 # AlpacaClient/FinvizClient 泛型别名
 ├── web.rs        # 三个自研网关代理(futunn 搜索/DeepSeek 翻译/iposcoop IPO 抓取),
 │                 # 从 TS Gateway worker 逐行移植
-└── finviz_data.rs # Finviz Elite CSV 导出 → protocol DTO(economic/earnings 周窗口,
-                  # 美东时钟;行换算有测试)
+└── finviz_data.rs # Finviz Elite CSV 导出 → protocol DTO:economic/earnings 周窗口
+                  # (美东时钟)+ screener_cells 筛选导出逐格定型(Cell{text,value},
+                  # K/M/B/%/货币/千分位→数值,原文保留显示;行换算有测试)
 ```
 
 ## 线协议契约(protocol crate,唯一契约)
@@ -97,8 +101,12 @@ server 侧 intern);推送 `Quote`/`Trade`/`Bar`/`News`;RPC 请求-响应按 id
 3. web.rs 三个代理是从 TS Gateway worker 逐行移植的:改行为前先对照原逻辑
    (IPO 表第 6 列跳过、futunn `marketType == 2`、数值列容错 0 等)——测试
    锚定了这些行为,改了行为要同步改测试。
-4. `fan_out` 广播给所有会话,订阅协商全在 SubscriptionHub(纯逻辑);排查
-   "客户端收不到推送"先看 HubDiff 是否为空(并集没变化就不会下发)。
+4. `fan_out` 是**纯路由分发**(2026-11-23 起):Quote/Trade/Bar 按 hub 订阅表
+   只发给订阅了该符号对应通道的客户端(`hub.subscribed` 查表,符号键大写
+   归一),News 全市场广播;订阅协商全在 SubscriptionHub(纯逻辑)。排查
+   "客户端收不到推送"先看 HubDiff 是否为空(并集没变化就不会下发),再看
+   客户端是否订阅了该符号(路由按订阅表丢弃)。**server 不做行情计算**
+   (规则过滤/桶聚合都在客户端)——VPS 算力约束,加服务端计算前先问。
 5. **下行通道有界 + 有损**(session.rs `OUTBOUND_CAPACITY` 2048):慢客户端
    吃 `try_send` 丢帧(计 `dropped_frames`,30s `ingest health` 日志汇总),
    而不是无限堆积延迟。**通道操作一律 `try_send`**——`Sender::send` 是
@@ -109,9 +117,14 @@ server 侧 intern);推送 `Quote`/`Trade`/`Bar`/`News`;RPC 请求-响应按 id
    客户端重连无效,等量能回落或换 feed;drop 增长 = 下发段慢客户端。
 5. 心跳判定是"60s 无**任何**客户端帧",不是只看 Ping——客户端的 RPC 请求
    同样续命。
+7. `/etc/zensidus/server.toml` 期望属主 **root:zensidus 0640**(服务以
+   `zensidus` 用户读它)。root 身份手改文件会把属主换成 root:root → 服务
+   读配置 Permission denied → **崩溃循环**(2026-11-23 实测)。root 编辑后
+   `chown root:zensidus` 或用 `install -o root -g zensidus -m 640` 落盘。
 
 ## 测试
 
-`cargo test -p server`(hub 并集/引用计数、session 认证+心跳+订阅回放、
-mapping 条件位、finviz_data 换算/周窗口、web.rs 代理解析与列裁剪)。
-CI 的 linux-check 保证全依赖在 Linux 下编译通过(musl 发布包另走 tag 流程)。
+`cargo test -p server`(hub 并集/引用计数/subscribed 路由判定、session 认证
++心跳+订阅回放、mapping 条件位、finviz_data 换算/周窗口/筛选单元格定型、
+web.rs 代理解析与列裁剪)。CI 的 linux-check 保证全依赖在 Linux 下编译
+通过(musl 发布包另走 tag 流程)。

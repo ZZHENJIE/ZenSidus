@@ -214,9 +214,9 @@ app:
     direction: ETF direction
     long: Long
     short: Short
-    index_open: Index open (today)
-    etf_open: ETF open (today)
-    opens_desc: These are today's opening prices — update them each trading day.
+    index_open: Index open
+    etf_open: ETF open
+    opens_desc: Opening prices used by the calculation — daily bars auto-fill them; edit any time.
     index_offset: Index offset
     long_short_offset: Long/short offset
     offsets_desc: Both may be negative — the index offset shifts the computed level, the long/short offset lands on the spread side the direction picks.
