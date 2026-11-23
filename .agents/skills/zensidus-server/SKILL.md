@@ -19,9 +19,9 @@ crates/server/src/
 │                 # deepseek/proxy);真实文件 gitignored,样例 server.toml.example
 ├── state.rs      # AppState:client_id 分配 / apply_diff(HubDiff → 上游订阅命令)/
 │                 # fan_out(纯路由:Quote/Trade/Bar 按 hub 订阅表只发给订阅了
-│                 # 该符号对应通道的客户端,News 广播;server 只做数据分发,
-│                 # 无行情计算)/ spawn(上游泵:anysdk 消息 → mapping → fan_out;
-│                 # 上游命令走 mpsc)
+│                 # 该符号对应通道的客户端,News 按 NEWS 位只发给订阅新闻的
+│                 # 客户端;server 只做数据分发,无行情计算)/ spawn(上游泵:
+│                 # anysdk 消息 → mapping → fan_out;上游命令走 mpsc)
 ├── session.rs    # 每连接一个 task:Hello 验凭据(TOTP ±1 窗口,或会话令牌;
 │                 # 不符回 AuthFail 后断开)→ Welcome 对时+轮换下发令牌 →
 │                 # 心跳(客户端 10s Ping,60s 无帧判死)→ Subscribe/Unsubscribe
@@ -103,10 +103,12 @@ server 侧 intern);推送 `Quote`/`Trade`/`Bar`/`News`;RPC 请求-响应按 id
    锚定了这些行为,改了行为要同步改测试。
 4. `fan_out` 是**纯路由分发**(2026-11-23 起):Quote/Trade/Bar 按 hub 订阅表
    只发给订阅了该符号对应通道的客户端(`hub.subscribed` 查表,符号键大写
-   归一),News 全市场广播;订阅协商全在 SubscriptionHub(纯逻辑)。排查
-   "客户端收不到推送"先看 HubDiff 是否为空(并集没变化就不会下发),再看
-   客户端是否订阅了该符号(路由按订阅表丢弃)。**server 不做行情计算**
-   (规则过滤/桶聚合都在客户端)——VPS 算力约束,加服务端计算前先问。
+   归一),News 按 NEWS 位只发给订阅新闻的客户端(客户端 attach 时发
+   `Subscribe{symbols:[], channels:NEWS}`);订阅协商全在 SubscriptionHub
+   (纯逻辑)。排查"客户端收不到推送"先看 HubDiff 是否为空(并集没变化就
+   不会下发),再看客户端是否订阅了该符号/新闻通道(路由按订阅表丢弃)。
+   **server 不做行情计算**(规则过滤/桶聚合都在客户端)——VPS 算力约束,
+   加服务端计算前先问。
 5. **下行通道有界 + 有损**(session.rs `OUTBOUND_CAPACITY` 2048):慢客户端
    吃 `try_send` 丢帧(计 `dropped_frames`,30s `ingest health` 日志汇总),
    而不是无限堆积延迟。**通道操作一律 `try_send`**——`Sender::send` 是

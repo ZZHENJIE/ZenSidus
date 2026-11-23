@@ -770,7 +770,8 @@ impl Geometry {
         );
     }
 
-    /// 右轴上的最新价价签(方向色底、面板底色字;不裁剪)。
+    /// 右轴上的最新价价签(方向色底、面板底色字;不裁剪)。价签上方是
+    /// 当前桶的收盘倒计时(muted 底,每秒由面板的定时器驱动重绘现算)。
     fn paint_last_price_tag(
         &self,
         frame: &FrameData,
@@ -789,19 +790,55 @@ impl Geometry {
             frame.latest.expect("checked above").open,
             frame.latest.expect("checked above").close,
         );
-        Tag {
-            bounds: Bounds::new(
-                point(
-                    px(self.bounds.origin.x.as_f32() + self.plot_w() + 2.),
-                    px(y - AXIS_FONT_SIZE * 0.8),
-                ),
-                size(px(self.axis_w - 4.), px(AXIS_FONT_SIZE * 1.6)),
+        let bounds = Bounds::new(
+            point(
+                px(self.bounds.origin.x.as_f32() + self.plot_w() + 2.),
+                px(y - AXIS_FONT_SIZE * 0.8),
             ),
+            size(px(self.axis_w - 4.), px(AXIS_FONT_SIZE * 1.6)),
+        );
+        Tag {
+            bounds,
             background: color,
             text_color: palette.background,
             text: format::format_quote(close),
         }
         .paint(window, cx);
+
+        // 收盘倒计时(价签正上方):到当前桶结束边界的剩余时间,按
+        // 当前时钟现算(每秒的定时器 notify 驱动本元素重绘)。
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let remaining_ms = (frame.timeframe.bucket_end_ms(now_ms) - now_ms).max(0);
+        Tag {
+            bounds: Bounds::new(
+                point(
+                    bounds.origin.x,
+                    px(bounds.origin.y.as_f32() - bounds.size.height.as_f32() - 2.),
+                ),
+                bounds.size,
+            ),
+            background: palette.muted_text,
+            text_color: palette.background,
+            text: Self::format_countdown(remaining_ms),
+        }
+        .paint(window, cx);
+    }
+
+    /// 桶收盘倒计时文本:≥1 天 → "Xd HH:MM";≥1 小时 → "H:MM:SS";
+    /// 否则 "M:SS"。
+    fn format_countdown(ms: i64) -> String {
+        let total = (ms / 1000).max(0);
+        let days = total / 86_400;
+        let hours = (total % 86_400) / 3_600;
+        let minutes = (total % 3_600) / 60;
+        let seconds = total % 60;
+        if days > 0 {
+            format!("{days}d {hours:02}:{minutes:02}")
+        } else if hours > 0 {
+            format!("{hours}:{minutes:02}:{seconds:02}")
+        } else {
+            format!("{minutes}:{seconds:02}")
+        }
     }
 
     fn paint_axes(&self, frame: &FrameData, palette: &Palette, window: &mut Window, cx: &mut App) {

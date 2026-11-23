@@ -16,7 +16,6 @@ use gpui_kit::{
 
 use anysdk::alpaca_stream::StockMessage;
 
-use crate::data::api::Bar;
 use crate::data::stream::{StreamConsumer, StreamHandle, Wish};
 use crate::panels::{Panel, panel_title, refresh_button, reload_on_connect};
 use crate::tr;
@@ -79,6 +78,20 @@ impl Panel for ChartPanel {
         // Startup load + auto-load once the connection lands.
         Self::refresh(this.kline.downgrade(), cx);
         reload_on_connect::<Self>(this.kline.downgrade(), cx);
+        // 桶收盘倒计时:每秒 notify 一次 K 线状态,倒计时在 paint 时按
+        // 当前时钟现算。实体随窗口关闭释放,循环自然结束。
+        let kline = this.kline.downgrade();
+        cx.spawn(async move |_, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(1))
+                    .await;
+                if kline.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         this
     }
 
@@ -96,51 +109,31 @@ impl StreamConsumer for ChartPanel {
         &mut self.stream
     }
 
-    /// Feed live bars into the chart tail: daily bars on 1D, minute/updated
-    /// bars aggregated into the chosen bucket on intraday timeframes. Each
-    /// change notifies the state entity (the panel renders from it, so GPUI
-    /// invalidates the view).
+    /// 实时蜡烛的唯一来源 = trade 流:每笔成交按当前周期归桶喂给
+    /// `apply_trade`(同桶增量、越桶开新根),K 线逐笔跟手。bar 推送
+    /// (Daily/Minute/Updated)不再消费。每批一次实体 update,由 GPUI
+    /// 合并重绘。
     fn apply_batch(&mut self, messages: Vec<StockMessage>, cx: &mut Context<Self>) {
-        let timeframe = self.kline.read(cx).timeframe();
-        for message in messages {
-            match message {
-                StockMessage::DailyBar(bar) if timeframe == Timeframe::OneDay => {
-                    self.kline.update(cx, |state, cx| {
-                        if state.apply_daily_bar(Bar {
-                            time_ms: bar.time.timestamp_millis(),
-                            open: bar.open,
-                            high: bar.high,
-                            low: bar.low,
-                            close: bar.close,
-                            volume: bar.volume,
-                            vwap: bar.vwap,
-                            trade_count: bar.trade_count,
-                        }) {
-                            cx.notify();
-                        }
-                    });
-                }
-                StockMessage::MinuteBar(bar) | StockMessage::UpdatedBar(bar)
-                    if timeframe.is_intraday() =>
-                {
-                    self.kline.update(cx, |state, cx| {
-                        if state.apply_minute_bar(
-                            bar.time.timestamp_millis(),
-                            bar.open,
-                            bar.high,
-                            bar.low,
-                            bar.close,
-                            bar.volume,
-                            bar.vwap,
-                            bar.trade_count,
-                        ) {
-                            cx.notify();
-                        }
-                    });
-                }
-                _ => {}
-            }
+        let trades: Vec<_> = messages
+            .into_iter()
+            .filter_map(|message| match message {
+                StockMessage::Trade(trade) => Some(trade),
+                _ => None,
+            })
+            .collect();
+        if trades.is_empty() {
+            return;
         }
+        self.kline.update(cx, |state, cx| {
+            let mut changed = false;
+            for trade in &trades {
+                changed |=
+                    state.apply_trade(trade.time.timestamp_millis(), trade.price, trade.size);
+            }
+            if changed {
+                cx.notify();
+            }
+        });
     }
 }
 
@@ -187,9 +180,9 @@ impl ChartPanel {
         }
     }
 
-    /// Publish the followed symbol to the hub. Trades + daily bars always
-    /// ride along (daily tail updates); the minute-bars wish is only set
-    /// while an intraday timeframe is on.
+    /// Publish the followed symbol to the hub: trades 是实时蜡烛的唯一
+    /// 数据源(bar 推送已不再消费)。While the tab is not the active one
+    /// the set is empty, unsubscribing its share of the union.
     fn sync_subscription(&mut self, cx: &mut Context<Self>) {
         let wanted: BTreeSet<String> = if self.active {
             self.symbol(cx)
@@ -198,12 +191,10 @@ impl ChartPanel {
         } else {
             BTreeSet::new()
         };
-        let bars = self.kline.read(cx).timeframe().is_intraday();
         self.stream.set_wish(
             Wish {
                 symbols: wanted,
                 trades: true,
-                bars,
                 ..Default::default()
             },
             cx,

@@ -95,8 +95,8 @@ impl AppState {
 
     /// 扇出一帧给已认证客户端。**纯路由分发**:行情帧只发给订阅了该
     /// 符号对应通道的客户端(hub 查表,一次 HashMap 查找,无任何规则
-    /// 计算——server 定位是数据分发,VPS 不做行情计算);`News` 是全
-    /// 市场推送,维持广播。
+    /// 计算——server 定位是数据分发,VPS 不做行情计算);`News` 只发给
+    /// 订阅了 NEWS 通道的客户端(客户端 attach 时发送订阅帧)。
     ///
     /// 有界通道 + `try_send`:客户端消费跟不上时丢掉这一帧(行情 Quote
     /// 本就 latest-wins,Trade/Bar 在极端突发下偶缺可接受),换来的是
@@ -117,13 +117,19 @@ impl AppState {
             )),
             _ => None,
         };
+        let is_news = matches!(frame, Frame::News(_));
 
         let hub = self.hub.lock().unwrap();
         let clients = self.clients.lock().unwrap();
         for (client_id, sender) in clients.iter() {
-            if let Some((symbol, channels)) = routed
-                && !hub.subscribed(*client_id, symbol, channels)
-            {
+            let deliver = if let Some((symbol, channels)) = routed {
+                hub.subscribed(*client_id, symbol, channels)
+            } else if is_news {
+                hub.news_wants(*client_id)
+            } else {
+                true
+            };
+            if !deliver {
                 continue;
             }
             match sender.try_send(frame.clone()) {

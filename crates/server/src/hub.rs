@@ -42,6 +42,9 @@ pub struct SubscriptionHub {
     /// client_id → (symbol → channels)。符号键统一大写(行情帧符号全
     /// 大写;客户端订阅串大小写容错,入库归一让路由查表 O(1))。
     wishes: HashMap<u64, HashMap<String, Channels>>,
+    /// 订阅了新闻通道的 client(News 无 symbol,客户端级开关;
+    /// Subscribe/Unsubscribe 携带 NEWS 位即加/退,断开清理)。
+    news: BTreeSet<u64>,
     /// 已发给上游的并集镜像(diff 的基准)。
     upstream: HashMap<String, Channels>,
 }
@@ -89,13 +92,16 @@ impl SubscriptionHub {
     }
 
     /// 客户端增量订阅:symbols 的通道位累加进该 client 的意愿(符号键
-    /// 归一大写)。
+    /// 归一大写)。NEWS 位是客户端级开关(News 无 symbol,不带符号)。
     pub fn apply_subscribe(
         &mut self,
         client_id: u64,
         symbols: &[String],
         channels: Channels,
     ) -> HubDiff {
+        if channels.contains(Channels::NEWS) {
+            self.news.insert(client_id);
+        }
         let wish = self.wishes.entry(client_id).or_default();
         for symbol in symbols {
             let bits = wish
@@ -113,6 +119,9 @@ impl SubscriptionHub {
         symbols: &[String],
         channels: Channels,
     ) -> HubDiff {
+        if channels.contains(Channels::NEWS) {
+            self.news.remove(&client_id);
+        }
         if let Some(wish) = self.wishes.get_mut(&client_id) {
             for symbol in symbols {
                 let key = symbol.to_ascii_uppercase();
@@ -139,9 +148,15 @@ impl SubscriptionHub {
             .is_some_and(|bits| bits.intersects(channels))
     }
 
+    /// 新闻路由判定:客户端是否订阅了 NEWS 通道。
+    pub fn news_wants(&self, client_id: u64) -> bool {
+        self.news.contains(&client_id)
+    }
+
     /// 客户端断开:撤销其全部意愿。
     pub fn remove_client(&mut self, client_id: u64) -> HubDiff {
         self.wishes.remove(&client_id);
+        self.news.remove(&client_id);
         self.diff()
     }
 
@@ -299,5 +314,26 @@ mod tests {
         hub.apply_unsubscribe(1, &symbols(&["AAPL"]), Channels::DAILY);
         assert!(!hub.subscribed(1, "AAPL", Channels::DAILY));
         assert!(hub.subscribed(1, "AAPL", Channels::TRADES), "其余位保留");
+    }
+
+    /// 新闻通道订阅:NEWS 位按客户端加/退,断开清理;不影响股票通道。
+    #[test]
+    fn news_subscription_tracks_client() {
+        let mut hub = SubscriptionHub::new();
+        hub.apply_subscribe(1, &symbols(&[]), Channels::NEWS);
+        assert!(hub.news_wants(1), "空符号列表 + NEWS 位 = 订阅新闻");
+
+        hub.apply_subscribe(1, &symbols(&["AAPL"]), Channels::QUOTES);
+        assert!(hub.subscribed(1, "AAPL", Channels::QUOTES));
+        hub.apply_unsubscribe(1, &symbols(&[]), Channels::NEWS);
+        assert!(!hub.news_wants(1), "NEWS 位退订");
+        assert!(
+            hub.subscribed(1, "AAPL", Channels::QUOTES),
+            "股票通道不受新闻退订影响"
+        );
+
+        hub.apply_subscribe(2, &symbols(&[]), Channels::NEWS);
+        hub.remove_client(2);
+        assert!(!hub.news_wants(2), "断开清理新闻订阅");
     }
 }

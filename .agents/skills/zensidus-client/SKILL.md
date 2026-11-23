@@ -72,9 +72,16 @@ crates/client/src/
 │                        # timeframe_menu(扁平菜单,值后带单位词,单位切换处
 │                        # 分隔线)+ timeframe_item_label。周期 11 档:分
 │                        # 1/2/3/5/10/15/30、时 1/2/4、日/周/月(Alpaca 串透传)。
-│                        # 历史走 Bars RPC,实时走 DailyBar(日/周/月/年桶聚合)
-│                        # /MinuteBar 聚合(分钟周期,SymbolWish.bars 意愿 →
-│                        # Channels::BARS)。
+│                        # 数据两条线:历史走 Bars RPC(切换标的/周期时拉取),
+│                        # 此后实时蜡烛**全部由 trade 流逐笔构建**——
+│                        # KlineState::apply_trade 按当前周期归桶(盘中分钟桶/
+│                        # 1D 美东日界/周界/月界):同桶增量(close/high/low/
+│                        # volume=size 累加/vwap 量加权/count)、越桶开新根、
+│                        # 迟到丢弃;不再消费 DailyBar/MinuteBar/UpdatedBar
+│                        # 推送,无 BARS 意愿(SymbolWish.bars 已退役)。
+│                        # 右轴最新价价签上方有**当前桶收盘倒计时**(muted
+│                        # Tag,Timeframe::bucket_end_ms 按当前时钟现算,
+│                        # ChartPanel 每秒定时器 notify 驱动重绘)。
 │                        # ⚠ PaintQuad 的 BorderStyle::Dashed 在零高度/零宽度 bounds
 │                        # 上被剔除(边框几何依赖 bounds 面积)——虚线要自绘分段
 │                        # 实心 quad;Element::paint 里的 window.current_view()

@@ -31,19 +31,14 @@ pub use crate::utils::state::ServerStatus;
 /// The hub's [`SymbolWish`] (which channel unions go on the wire) and the
 /// filter stage's [`StreamSpec`] (what reaches the panel) are derived from
 /// it, so the two can no longer drift apart per panel.
-/// The hub's [`SymbolWish`] (which channel unions go on the wire) and the
-/// filter stage's [`StreamSpec`] (what reaches the panel) are derived from
-/// it, so the two can no longer drift apart per panel.
 #[derive(Clone, Default)]
 pub struct Wish {
     /// Followed symbols (uppercased); empty unsubscribes entirely.
     pub symbols: BTreeSet<String>,
-    /// Trades + daily bars.
+    /// Trades (+ daily bars,同一订阅组;日线锚点如 watchlist 的开盘列)。
     pub trades: bool,
     /// Top-of-book quotes.
     pub quotes: bool,
-    /// Minute/updated bars (intraday chart live updates; high rate).
-    pub bars: bool,
     /// Quote rule (market screener): minimum size for a quote to matter
     /// (0 = any).
     pub min_size: i64,
@@ -57,7 +52,6 @@ impl Wish {
         SymbolWish {
             symbols: self.symbols.clone(),
             trades: self.trades,
-            bars: self.bars,
             quotes: self.quotes,
         }
     }
@@ -65,11 +59,7 @@ impl Wish {
     fn to_spec(&self) -> StreamSpec {
         StreamSpec {
             symbols: self.symbols.clone(),
-            // Bar messages are filtered behind the trades gate (they ride
-            // the same firehose), so a bars consumer must open it too; its
-            // own `apply_batch` sorts the shapes out. The wire stays cheap
-            // either way — the hub wish is what the server subscribes.
-            trades: self.trades || self.bars,
+            trades: self.trades,
             quotes: self.quotes,
             min_size: self.min_size,
             exchanges: self.exchanges.clone(),
@@ -253,62 +243,54 @@ impl<T: StreamConsumer> StreamHandle<T> {
     }
 }
 
-/// A consumer of the market-wide news push. The server pushes news to every
-/// connected client (no per-symbol gating, no subscription frame of its
-/// own), so there is no wish here — only the pump and the follow-the-status
-/// lifecycle.
+/// A consumer of the market-wide news push. The server routes News only to
+/// clients subscribed on the NEWS channel — the pump's attach sends that
+/// subscription frame; it is per-session idempotent and replays with the
+/// hub-status observer on every reconnect.
 pub trait NewsConsumer: Sized + 'static {
     /// The consumer's news pump (a field), for the lifecycle wiring
     /// installed by [`NewsPump::new`].
     fn news_pump(&mut self) -> &mut NewsPump;
     /// One pushed article, merged into the consumer's state.
     fn on_news(&mut self, item: &NewsItem, cx: &mut Context<Self>);
-    /// Hub status changed; `newly_attached` is true when this event attached
-    /// a pump that was not running before (a fresh connect — the moment to
-    /// backfill what the offline startup skipped).
-    fn on_news_status(
-        &mut self,
-        _status: &ServerStatus,
-        _newly_attached: bool,
-        _cx: &mut Context<Self>,
-    ) {
-    }
 }
 
 /// The market-wide news push pump: one broadcast receiver of the server's
 /// NEWS channel, every article handed to [`NewsConsumer::on_news`] on the
 /// main thread. It runs for the consumer's whole lifetime (news is
-/// low-frequency, so consuming it costs nothing and the table stays current
-/// without a catch-up fetch on re-activation) and ends with the consumer.
+/// low-frequency, so consuming it costs nothing and the table stays
+/// current) and ends with the consumer. 纯推送,无拉取——表格从订阅时刻起
+/// 累积。
 pub struct NewsPump {
     pump: Option<Task<()>>,
 }
 
 impl NewsPump {
-    /// Full lifecycle wiring: the hub-status observer (attach on every
-    /// change, status reactions to the consumer).
+    /// Full lifecycle wiring: the hub-status observer (Connected → attach,
+    /// anything else → stop; a torn-down connection leaves a dead pump task
+    /// behind — dropping the handle lets the reconnect rebuild it).
     pub fn new<T: NewsConsumer>(cx: &mut Context<T>) -> Self {
         let hub = cx.global::<AppState>().hub.clone();
-        cx.observe(&hub, |this, hub, cx| {
-            let status = hub.read(cx).status().clone();
-            let was_attached = this.news_pump().is_attached();
-            this.news_pump().attach(cx);
-            this.on_news_status(&status, !was_attached, cx);
+        cx.observe(&hub, |this, hub, cx| match hub.read(cx).status() {
+            ServerStatus::Connected => this.news_pump().attach(cx),
+            _ => this.news_pump().stop(),
         })
         .detach();
         Self { pump: None }
     }
 
-    /// Attach the pump (once — a live pump is never replaced). Silent no-op
-    /// while the server is down; the hub-status observer calls again on
-    /// `Connected`.
+    /// Attach the pump: send the NEWS-channel subscription frame (server
+    /// routes News by it; per-session idempotent, re-sent on every attach —
+    /// the `Connected` replay) and open the broadcast receiver. Silent
+    /// no-op while the server is down.
     pub fn attach<T: NewsConsumer>(&mut self, cx: &mut Context<T>) {
-        if self.pump.is_some() {
-            return;
-        }
         let Ok(server) = AppState::server(cx) else {
             return;
         };
+        server.subscribe(Vec::new(), protocol::Channels::NEWS);
+        if self.pump.is_some() {
+            return;
+        }
         let mut rx = server.news_messages();
         self.pump = Some(cx.spawn(async move |this, cx| {
             loop {
@@ -338,5 +320,12 @@ impl NewsPump {
     /// Whether a pump is live.
     pub fn is_attached(&self) -> bool {
         self.pump.is_some()
+    }
+
+    /// Stop the pump (the observer's non-Connected path; a torn-down socket
+    /// leaves a dead pump task behind — drop the handle so `attach` can
+    /// rebuild on the next `Connected`).
+    pub fn stop(&mut self) {
+        self.pump = None;
     }
 }

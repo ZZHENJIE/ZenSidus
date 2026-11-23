@@ -1,10 +1,12 @@
-//! K 线图的状态实体:历史 bars、视口(viewport)、实时推送的聚合入口。
+//! K 线图的状态实体:历史 bars、视口(viewport)、实时蜡烛构建。
 //!
-//! 状态所有者是持有 [`KlineState`] 实体的视图(ChartPanel):面板把 RPC
-//! 历史与推送喂进来,元素在绘制时读取、在交互时改写视口。所有变更方法
-//! 返回"是否发生变化",由调用方 `cx.notify()` ——本模块不持有 GPUI 上下文。
+//! 数据两条线:**历史**由面板在切换标的/周期时经 Bars RPC 拉取
+//! (`set_history` 整体写入);此后的**实时蜡烛全部由 trade 流逐笔画出**
+//! ([`KlineState::apply_trade`] 按当前周期归桶:同桶增量、越桶开新根、
+//! 迟到丢弃)。所有变更方法返回"是否发生变化",由调用方 `cx.notify()`
+//! ——本模块不持有 GPUI 上下文。
 
-use std::collections::BTreeMap;
+use chrono::Datelike as _;
 
 use crate::data::api::Bar;
 
@@ -92,8 +94,8 @@ impl Timeframe {
         }
     }
 
-    /// 分钟/小时周期返回桶宽(分钟);天/周/月返回 0(实时走 DailyBar
-    /// 推送,按对应的美东日/周/月聚合)。
+    /// 分钟/小时周期返回桶宽(分钟);天/周/月返回 0(实时按美东日/周/
+    /// 月界归桶,见 `KlineState::bucket_start`)。
     pub fn bucket_minutes(self) -> u32 {
         match self {
             Timeframe::OneMin => 1,
@@ -110,9 +112,32 @@ impl Timeframe {
         }
     }
 
-    /// 是否分钟/小时周期(决定订阅意愿与推送过滤)。
+    /// 是否分钟/小时周期。
     pub fn is_intraday(self) -> bool {
         self.bucket_minutes() > 0
+    }
+
+    /// `now_ms` 所在桶的结束时刻(= 下一桶起点):实时蜡烛的收盘边界,
+    /// 收盘倒计时按它计算。盘中 = 分钟桶结束;日/周/月 = 对应的美东
+    /// 次日界/下周界/下月界。
+    pub fn bucket_end_ms(self, now_ms: i64) -> i64 {
+        match self {
+            Self::OneDay => scale::ny_date_ms(scale::ny_date(now_ms) + chrono::Duration::days(1)),
+            Self::OneWeek => scale::ny_week_start_ms(now_ms + 7 * 86_400_000),
+            Self::OneMonth => {
+                let date = scale::ny_date(now_ms);
+                let next_first = if date.month() == 12 {
+                    chrono::NaiveDate::from_ymd_opt(date.year() + 1, 1, 1)
+                } else {
+                    chrono::NaiveDate::from_ymd_opt(date.year(), date.month() + 1, 1)
+                };
+                scale::ny_date_ms(next_first.expect("first of month is a valid date"))
+            }
+            tf => {
+                scale::bucket_start_ms(now_ms, tf.bucket_minutes())
+                    + (tf.bucket_minutes() as i64) * 60_000
+            }
+        }
     }
 
     /// 历史加载条数(1Min 一天约 390 根,多留一些)。
@@ -129,24 +154,6 @@ pub struct Viewport {
     pub span: f32,
 }
 
-/// 原始 bar(推送版快照;时间键 = 分钟起点或日线起点)。minute/updated 两
-/// 种推送都是"这一分钟的当前完整快照",日线同理是"这一交易日的快照",
-/// 所以直接整条替换、不做增量合并。
-#[derive(Debug, Clone, Copy)]
-struct RawBar {
-    open: f64,
-    high: f64,
-    low: f64,
-    close: f64,
-    volume: i64,
-    vwap: f64,
-    trade_count: i64,
-}
-
-/// 原始分钟保留窗口(≈ 两个美股交易日)。
-const MINUTE_RETENTION: i64 = 800;
-/// 原始日线保留窗口(覆盖年桶回溯到 1 月 1 日)。
-const DAY_RETENTION: i64 = 800;
 /// 视口常量:最小/最大可见桶数、默认可见桶数、钉住最新时的右侧留白。
 const MIN_SPAN: f32 = 15.;
 const MAX_SPAN: f32 = 1000.;
@@ -168,10 +175,6 @@ pub struct KlineState {
     loading: bool,
     /// 至少成功加载过一次(区分"无数据"与"还没选标的")。
     loaded: bool,
-    /// 本次会话的原始分钟 bar(分钟/小时周期消费,聚合成分/时桶)。
-    minutes: BTreeMap<i64, RawBar>,
-    /// 本次会话的原始日线 bar(天/周/月/年周期消费,聚合到对应桶)。
-    days: BTreeMap<i64, RawBar>,
 }
 
 impl KlineState {
@@ -188,8 +191,6 @@ impl KlineState {
             load_generation: 0,
             loading: false,
             loaded: false,
-            minutes: BTreeMap::new(),
-            days: BTreeMap::new(),
         }
     }
 
@@ -233,8 +234,6 @@ impl KlineState {
         }
         self.symbol = symbol;
         self.bars.clear();
-        self.minutes.clear();
-        self.days.clear();
         self.loaded = false;
         self.pending_viewport_reset = true;
         true
@@ -265,7 +264,8 @@ impl KlineState {
     }
 
     /// 写入历史 bars(成功响应)。代数不符的响应被丢弃;同周期刷新保留
-    /// 视口,切周期/换标的后的首次加载重置视口。
+    /// 视口,切周期/换标的后的首次加载重置视口。历史是此后实时蜡烛的
+    /// 基线:`apply_trade` 从最后一根的桶起继续增量。
     pub fn set_history(&mut self, generation: u64, mut bars: Vec<Bar>) -> bool {
         if generation != self.load_generation {
             return false;
@@ -288,122 +288,84 @@ impl KlineState {
         true
     }
 
-    /// 日线实时推送(天/周/月/年周期消费):写入原始日线,按当前周期的
-    /// 美东日/周/月/年桶重算并合并进 bars。分钟周期调用是 no-op。
-    /// 键归一化到美东当日零点:同一交易日的多次推送(盘中快照)共享一键。
-    pub fn apply_daily_bar(&mut self, bar: Bar) -> bool {
-        if self.timeframe.bucket_minutes() != 0 {
-            return false;
-        }
-        let day_key = scale::ny_date_ms(scale::ny_date(bar.time_ms));
-        self.days.insert(
-            day_key,
-            RawBar {
-                open: bar.open,
-                high: bar.high,
-                low: bar.low,
-                close: bar.close,
-                volume: bar.volume,
-                vwap: bar.vwap,
-                trade_count: bar.trade_count,
-            },
-        );
-        self.prune_days();
-
-        let bucket = self.daily_bucket_start(day_key);
-        let Some(aggregate) = aggregate_days(&self.days, bucket, self.timeframe) else {
-            return false;
-        };
-
-        let last_time = self.bars.last().map(|bar| bar.time_ms);
-        match last_time {
-            None => {
-                self.bars.push(aggregate);
-                self.rebuild_viewport();
-                true
-            }
-            Some(time_ms) if self.daily_bucket_start(time_ms) == bucket => {
-                let last = self.bars.last_mut().expect("checked above");
-                *last = aggregate;
-                true
-            }
-            Some(time_ms) if time_ms < bucket => {
-                self.bars.push(aggregate);
-                self.trim_viewport();
-                true
-            }
-            // 落在最后一根之前的迟到推送:重算结果与历史一致,丢弃。
-            Some(_) => false,
-        }
-    }
-
-    /// 天/周/月/年周期:一根日线所属的桶起点(美东;OneDay 即日线本身)。
-    fn daily_bucket_start(&self, day_ms: i64) -> i64 {
+    /// 任意周期的时间 → 桶起点:盘中按分钟桶(UTC 整除对齐);日/周/月
+    /// 按美东日界/周界/月界。实时成交与历史 bar 都经它归桶。
+    fn bucket_start(&self, time_ms: i64) -> i64 {
         match self.timeframe {
-            Timeframe::OneWeek => scale::ny_week_start_ms(day_ms),
-            Timeframe::OneMonth => scale::ny_month_start_ms(day_ms),
-            _ => day_ms,
+            Timeframe::OneWeek => scale::ny_week_start_ms(time_ms),
+            Timeframe::OneMonth => scale::ny_month_start_ms(time_ms),
+            Timeframe::OneDay => scale::ny_date_ms(scale::ny_date(time_ms)),
+            tf => scale::bucket_start_ms(time_ms, tf.bucket_minutes()),
         }
     }
 
-    /// 分钟实时推送(Alpaca minute/updated bars):写入原始分钟,重算所在
-    /// 桶并合并进 bars。日线调用是 no-op。
-    #[allow(clippy::too_many_arguments)]
-    pub fn apply_minute_bar(
-        &mut self,
-        time_ms: i64,
-        open: f64,
-        high: f64,
-        low: f64,
-        close: f64,
-        volume: i64,
-        vwap: f64,
-        trade_count: i64,
-    ) -> bool {
-        let bucket_minutes = self.timeframe.bucket_minutes();
-        if bucket_minutes == 0 {
+    /// 实时蜡烛构建(所有周期统一):每笔成交按当前周期归桶——
+    /// **同桶**:增量合并最后一根 bar(close/high/low、volume 与
+    /// trade_count 累加、vwap 量加权);**越桶**(或历史为空):开新根
+    /// (首笔成交定义 open);**早于最后一根的桶**:迟到成交,丢弃
+    /// (重算结果与历史一致)。volume 由成交 size 累加,不再消费 bar 推送。
+    pub fn apply_trade(&mut self, time_ms: i64, price: f64, size: i64) -> bool {
+        if price <= 0.0 {
             return false;
         }
-        let minute = scale::bucket_start_ms(time_ms, 1);
-        self.minutes.insert(
-            minute,
-            RawBar {
-                open,
-                high,
-                low,
-                close,
-                volume,
-                vwap,
-                trade_count,
-            },
-        );
-        self.prune_minutes();
+        let size = size.max(0);
+        let bucket = self.bucket_start(time_ms);
 
-        let bucket = scale::bucket_start_ms(minute, bucket_minutes);
-        let bucket_end = bucket + (bucket_minutes as i64) * 60_000;
-        let Some(aggregate) = aggregate_bars(self.minutes.range(bucket..bucket_end), bucket) else {
+        let (same_bucket, later) = match self.bars.last() {
+            None => (false, true),
+            Some(last) => {
+                let last_bucket = self.bucket_start(last.time_ms);
+                (last_bucket == bucket, bucket > last_bucket)
+            }
+        };
+        if !same_bucket && !later {
             return false;
+        }
+
+        let (volume, vwap) = match (same_bucket, self.bars.last().map(|b| (b.volume, b.vwap))) {
+            (true, Some((prev_volume, prev_vwap))) if prev_volume > 0 || size > 0 => {
+                let volume = prev_volume + size;
+                let vwap = (prev_vwap * prev_volume as f64 + price * size as f64) / volume as f64;
+                (volume, vwap)
+            }
+            _ => (size, price),
         };
 
-        let last_time = self.bars.last().map(|bar| bar.time_ms);
-        match last_time {
-            None => {
-                self.bars.push(aggregate);
-                self.rebuild_viewport();
+        match self.bars.last_mut() {
+            Some(last) if same_bucket => {
+                last.high = last.high.max(price);
+                last.low = last.low.min(price);
+                last.close = price;
+                last.volume = volume;
+                last.vwap = vwap;
+                last.trade_count += 1;
                 true
             }
-            Some(time_ms) if scale::bucket_start_ms(time_ms, bucket_minutes) == bucket => {
-                let last = self.bars.last_mut().expect("checked above");
-                *last = aggregate;
+            _ => {
+                self.bars.push(Bar {
+                    time_ms: bucket,
+                    open: price,
+                    high: price,
+                    low: price,
+                    close: price,
+                    volume,
+                    vwap,
+                    trade_count: 1,
+                });
+                // ⚠ 历史重载在途(pending_viewport_reset)时**不动视口**:
+                // 此刻开出的实时蜡烛是过渡画面,若在这里消耗视口重置,
+                // 视口会钉在"只有一根实时蜡烛"的位置上——随后 set_history
+                // 走保留视野分支,结果显示最老的历史(2026-11-24 实测)。
+                // pending 留给 set_history 钉最新。
+                if !self.pending_viewport_reset {
+                    if self.bars.len() == 1 {
+                        self.rebuild_viewport();
+                    } else {
+                        self.trim_viewport();
+                    }
+                }
                 true
             }
-            Some(time_ms) if time_ms < bucket => {
-                self.bars.push(aggregate);
-                self.trim_viewport();
-                true
-            }
-            // 落在最后一根之前的迟到推送:重算结果与历史一致,丢弃。
-            Some(_) => false,
         }
     }
 
@@ -483,95 +445,6 @@ impl KlineState {
             self.clamp_right(self.viewport.right_ix, self.viewport.span)
         };
     }
-
-    /// 只保留最近 `MINUTE_RETENTION` 根原始分钟。
-    fn prune_minutes(&mut self) {
-        let Some(&newest) = self.minutes.keys().next_back() else {
-            return;
-        };
-        let cutoff = newest - MINUTE_RETENTION * 60_000;
-        let stale = self
-            .minutes
-            .range(..cutoff)
-            .map(|(k, _)| *k)
-            .collect::<Vec<_>>();
-        for key in stale {
-            self.minutes.remove(&key);
-        }
-    }
-
-    /// 只保留最近 `DAY_RETENTION` 根原始日线(覆盖年桶回溯到 1 月 1 日)。
-    fn prune_days(&mut self) {
-        let Some(&newest) = self.days.keys().next_back() else {
-            return;
-        };
-        let cutoff = newest - DAY_RETENTION * 86_400_000;
-        let stale = self
-            .days
-            .range(..cutoff)
-            .map(|(k, _)| *k)
-            .collect::<Vec<_>>();
-        for key in stale {
-            self.days.remove(&key);
-        }
-    }
-}
-
-/// 把一段原始 bar(分钟或日线)聚合成一个桶 bar(vwap 按量加权,
-/// trade_count 求和)。
-fn aggregate_bars<'a>(
-    bars: impl Iterator<Item = (&'a i64, &'a RawBar)>,
-    bucket: i64,
-) -> Option<Bar> {
-    let mut open = None;
-    let mut high = f64::MIN;
-    let mut low = f64::MAX;
-    let mut close = 0.;
-    let mut volume = 0i64;
-    let mut vwap_sum = 0.;
-    let mut trade_count = 0i64;
-    for (_, raw) in bars {
-        open.get_or_insert(raw.open);
-        high = high.max(raw.high);
-        low = low.min(raw.low);
-        close = raw.close;
-        volume += raw.volume;
-        vwap_sum += raw.vwap * raw.volume as f64;
-        trade_count += raw.trade_count;
-    }
-    let open = open?;
-    Some(Bar {
-        time_ms: bucket,
-        open,
-        high,
-        low,
-        close,
-        volume,
-        vwap: if volume > 0 {
-            vwap_sum / volume as f64
-        } else {
-            0.
-        },
-        trade_count,
-    })
-}
-
-/// 把天/周/月/年桶内的原始日线聚合成一个桶 bar(桶起点之后的连续同桶
-/// 日线;遇到下一个桶即停)。
-fn aggregate_days(days: &BTreeMap<i64, RawBar>, bucket: i64, timeframe: Timeframe) -> Option<Bar> {
-    let same_bucket = |day_ms: i64| -> bool {
-        match timeframe {
-            Timeframe::OneWeek => scale::ny_week_start_ms(day_ms) == bucket,
-            Timeframe::OneMonth => scale::ny_month_start_ms(day_ms) == bucket,
-            _ => day_ms == bucket,
-        }
-    };
-    let start = scale::ny_date_ms(scale::ny_date(bucket));
-    let window = days
-        .range(start..)
-        .skip_while(|(day_ms, _)| **day_ms < bucket)
-        .take_while(|(day_ms, _)| same_bucket(**day_ms));
-    aggregate_bars(window, bucket)
 }
 
 #[cfg(test)]
@@ -692,151 +565,162 @@ mod tests {
         assert_eq!(new_vp.span, DEFAULT_SPAN * 0.5);
     }
 
+    /// 盘中蜡烛由成交逐笔构建:同桶增量(high/low/close/volume/vwap/
+    /// count),下一桶开新根,迟到成交丢弃。
     #[test]
-    fn daily_bar_replaces_same_day_appends_next_day() {
-        let mut state = KlineState::new(Timeframe::OneDay);
-        // 2026-11-19(美东交易日)两根盘中推送:同日替换。
-        let day = |hour: u32| {
-            chrono::Utc
-                .with_ymd_and_hms(2026, 11, 19, hour, 0, 0)
-                .single()
-                .unwrap()
-                .timestamp_millis()
-        };
-        assert!(state.apply_daily_bar(bar(day(14), 100.)));
-        assert!(state.apply_daily_bar(bar(day(18), 101.)));
+    fn trades_build_and_roll_intraday_buckets() {
+        let mut state = KlineState::new(Timeframe::FiveMin);
+        let base = minute_ms(15, 0); // UTC 15:00 = 美东 10:00(冬令时),5Min 桶起点
+
+        assert!(state.apply_trade(base, 100., 10));
+        assert!(state.apply_trade(base + 60_000, 102., 10));
+        assert!(state.apply_trade(base + 120_000, 99., 10));
         assert_eq!(state.bars().len(), 1);
-        assert_eq!(state.bars()[0].close, 101.);
-        // 次日(11-20 05:00 UTC = 美东 11-20 00:00 冬令时)追加。
-        let next = chrono::Utc
-            .with_ymd_and_hms(2026, 11, 20, 5, 0, 0)
+        let b = &state.bars()[0];
+        assert_eq!(b.time_ms, base);
+        assert_eq!(b.open, 100.);
+        assert_eq!(b.high, 102.);
+        assert_eq!(b.low, 99.);
+        assert_eq!(b.close, 99.);
+        assert_eq!(b.volume, 30);
+        assert_eq!(b.vwap, (100. * 10. + 102. * 10. + 99. * 10.) / 30.);
+        assert_eq!(b.trade_count, 3);
+
+        // 下一桶 → 新根。
+        assert!(state.apply_trade(base + 5 * 60_000, 103., 5));
+        assert_eq!(state.bars().len(), 2);
+
+        // 迟到成交(旧桶)→ 丢弃,不影响已画蜡烛。
+        assert!(!state.apply_trade(base + 60_000, 999., 10));
+        assert_eq!(state.bars()[0].high, 102.);
+        assert_eq!(state.bars().len(), 2);
+    }
+
+    /// 空历史(无标的/无数据)的首笔成交开出第一根。
+    #[test]
+    fn first_trade_creates_the_first_bar() {
+        let mut state = KlineState::new(Timeframe::FiveMin);
+        assert!(state.apply_trade(minute_ms(15, 0), 100., 10));
+        assert_eq!(state.bars().len(), 1);
+        assert_eq!(state.bars()[0].open, 100.);
+        assert!(state.is_following());
+    }
+
+    /// 换标的后、历史加载在途时先到的成交,不得消耗视口重置——否则
+    /// set_history 走保留视野分支,显示最老的历史(实测 bug)。
+    #[test]
+    fn trade_during_history_load_keeps_pending_reset() {
+        let mut state = KlineState::new(Timeframe::OneDay);
+        state.set_symbol(Some("NVDA".into()));
+        let generation = state.begin_load();
+
+        // 历史在途:先到一笔成交(空历史 → 开根),不动视口。
+        assert!(state.apply_trade(minute_ms(15, 0), 100., 10));
+
+        let bars: Vec<Bar> = (0..300)
+            .map(|i| bar(i as i64 * 86_400_000, 10. + i as f64))
+            .collect();
+        assert!(state.set_history(generation, bars));
+
+        // 钉在最新:显示最后 DEFAULT_SPAN 根,右缘 = 最新 + 留白。
+        let vp = state.viewport();
+        assert_eq!(vp.right_ix, 305.);
+        assert!(state.is_following());
+    }
+
+    /// 桶收盘边界:盘中 = 分钟桶结束;1D = 美东次日零点(DST 由时区库
+    /// 换算消化)。
+    #[test]
+    fn bucket_end_is_the_next_boundary() {
+        let tf = Timeframe::FiveMin;
+        // 15:02:30 → 桶 15:00,结束 15:05。
+        assert_eq!(
+            tf.bucket_end_ms(minute_ms(15, 2) + 30_000),
+            minute_ms(15, 5)
+        );
+
+        // 1D:11-20 15:00 UTC → 美东次日零点(冬令时 = UTC 05:00)。
+        let day = Timeframe::OneDay;
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 11, 20, 15, 0, 0)
             .single()
             .unwrap()
             .timestamp_millis();
-        assert!(state.apply_daily_bar(bar(next, 102.)));
-        assert_eq!(state.bars().len(), 2);
-        assert!(state.is_following());
+        let next_midnight = chrono::Utc
+            .with_ymd_and_hms(2026, 11, 21, 5, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        assert_eq!(day.bucket_end_ms(now), next_midnight);
     }
 
+    /// 1D 按美东日界归桶:同日增量、次日开新根;周/月同理按周界/月界。
     #[test]
-    fn minute_bars_aggregate_into_buckets() {
+    fn trades_build_daily_and_weekly_buckets() {
+        // 1D:11-19(周四)同日两笔 → 一根;11-20 → 新根。
+        let mut day = KlineState::new(Timeframe::OneDay);
+        let thu = chrono::Utc
+            .with_ymd_and_hms(2026, 11, 19, 15, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        let fri = chrono::Utc
+            .with_ymd_and_hms(2026, 11, 20, 15, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        assert!(day.apply_trade(thu, 100., 10));
+        assert!(day.apply_trade(thu + 60_000, 101., 10));
+        assert_eq!(day.bars().len(), 1);
+        assert_eq!(day.bars()[0].close, 101.);
+        assert!(day.apply_trade(fri, 102., 10));
+        assert_eq!(day.bars().len(), 2);
+
+        // 1W:11-16(周一)与 11-17(周二)同周 → 一根;11-23(周一)→ 新根。
+        let mut week = KlineState::new(Timeframe::OneWeek);
+        let mon = chrono::Utc
+            .with_ymd_and_hms(2026, 11, 16, 15, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        let tue = chrono::Utc
+            .with_ymd_and_hms(2026, 11, 17, 15, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        let next_mon = chrono::Utc
+            .with_ymd_and_hms(2026, 11, 23, 15, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        assert!(week.apply_trade(mon, 100., 10));
+        assert!(week.apply_trade(tue, 101., 10));
+        assert_eq!(week.bars().len(), 1);
+        assert_eq!(week.bars()[0].close, 101.);
+        assert!(week.apply_trade(next_mon, 102., 10));
+        assert_eq!(week.bars().len(), 2);
+    }
+
+    /// 历史基线上的增量:成交量在最后一根 bar 上累加(不与历史重复计量,
+    /// 基线是拉取时刻的聚合,其后的成交都是新的);落在更早桶的迟到成交
+    /// 被丢弃。
+    #[test]
+    fn trades_increment_on_top_of_history() {
         let mut state = KlineState::new(Timeframe::FiveMin);
-        load(&mut state, vec![]);
-
-        // 10:00–10:03 三根原始分钟 → 一个 10:00 桶(美东;UTC 15:00)。
         let base = minute_ms(15, 0);
-        for m in 0..3u32 {
-            assert!(state.apply_minute_bar(
-                base + (m as i64) * 60_000,
-                100.,
-                100. + m as f64,
-                99.,
-                100. + m as f64,
-                10,
-                100.,
-                1,
-            ));
-        }
-        assert_eq!(state.bars().len(), 1);
-        let aggregated = &state.bars()[0];
-        assert_eq!(aggregated.time_ms, base);
-        assert_eq!(aggregated.open, 100.);
-        assert_eq!(aggregated.high, 102.);
-        assert_eq!(aggregated.close, 102.);
-        assert_eq!(aggregated.volume, 30);
-        assert_eq!(aggregated.vwap, 100.);
+        let mut history = vec![bar(base, 100.), bar(base + 300_000, 101.)];
+        history[1].volume = 30;
+        load(&mut state, history);
 
-        // 10:05 落到下一个桶 → 追加。
-        assert!(state.apply_minute_bar(base + 5 * 60_000, 103., 103., 102., 103., 5, 103., 1));
+        // 同桶(末根 15:05 桶内)增量。
+        assert!(state.apply_trade(base + 300_000 + 10_000, 99., 20));
         assert_eq!(state.bars().len(), 2);
-        // 迟到的 10:02 推送:重算 10:00 桶(与现值一致)→ 无追加。
-        assert!(!state.apply_minute_bar(base + 2 * 60_000, 100., 102., 99., 102., 10, 100., 1));
-        assert_eq!(state.bars().len(), 2);
-    }
+        assert_eq!(state.bars()[1].volume, 50);
+        assert_eq!(state.bars()[1].low, 99.);
+        assert_eq!(state.bars()[0].close, 100.);
 
-    #[test]
-    fn updated_minute_replaces_raw_snapshot() {
-        let mut state = KlineState::new(Timeframe::OneMin);
-        load(&mut state, vec![]);
-        let t = minute_ms(15, 0);
-        assert!(state.apply_minute_bar(t, 100., 101., 99., 100., 50, 100., 3));
-        // 更新推送是"该分钟的当前完整快照":整条替换,不累加量。
-        assert!(state.apply_minute_bar(t, 100., 102., 99., 102., 60, 100.5, 4));
-        assert_eq!(state.bars().len(), 1);
-        assert_eq!(state.bars()[0].volume, 60);
-        assert_eq!(state.bars()[0].high, 102.);
-    }
-
-    #[test]
-    fn daily_push_ignored_on_intraday_and_vice_versa() {
-        let mut state = KlineState::new(Timeframe::OneDay);
-        assert!(!state.apply_minute_bar(minute_ms(15, 0), 1., 1., 1., 1., 1, 1., 1));
-
-        let mut intraday = KlineState::new(Timeframe::FiveMin);
-        assert!(!intraday.apply_daily_bar(bar(minute_ms(15, 0), 1.)));
-    }
-
-    /// 美东某日零点的日线 bar(2026-11 是冬令时,午夜 ET = 05:00 UTC)。
-    fn day_bar(year: i32, month: u32, day: u32, close: f64) -> Bar {
-        Bar {
-            time_ms: chrono::Utc
-                .with_ymd_and_hms(year, month, day, 5, 0, 0)
-                .single()
-                .unwrap()
-                .timestamp_millis(),
-            open: close - 1.,
-            high: close + 1.,
-            low: close - 2.,
-            close,
-            volume: 100,
-            vwap: close,
-            trade_count: 1,
-        }
-    }
-
-    #[test]
-    fn weekly_bar_aggregates_daily_pushes() {
-        let mut state = KlineState::new(Timeframe::OneWeek);
-        load(&mut state, vec![]);
-
-        // 2026-11-16 是周一:16/17/18 三根日线聚合成一根周线。
-        assert!(state.apply_daily_bar(day_bar(2026, 11, 16, 100.)));
-        assert!(state.apply_daily_bar(day_bar(2026, 11, 17, 101.)));
-        assert!(state.apply_daily_bar(day_bar(2026, 11, 18, 102.)));
-        assert_eq!(state.bars().len(), 1);
-        let week = &state.bars()[0];
-        assert_eq!(week.open, 99.); // 首日 open
-        assert_eq!(week.close, 102.); // 末日 close
-        assert_eq!(week.high, 103.); // 各日 high 的最大
-        assert_eq!(week.low, 98.); // 各日 low 的最小
-        assert_eq!(week.volume, 300); // 各日 volume 求和
-        assert!(state.is_following());
-
-        // 同日重复推送(盘中快照):整日替换,周线量不翻倍。
-        assert!(state.apply_daily_bar(day_bar(2026, 11, 18, 102.)));
-        assert_eq!(state.bars().len(), 1);
-        assert_eq!(state.bars()[0].volume, 300);
-
-        // 下一周一(11-23)→ 追加新周桶。
-        assert!(state.apply_daily_bar(day_bar(2026, 11, 23, 103.)));
-        assert_eq!(state.bars().len(), 2);
-    }
-
-    #[test]
-    fn monthly_bar_spans_calendar_month() {
-        let mut state = KlineState::new(Timeframe::OneMonth);
-        load(&mut state, vec![]);
-        // 10-30(周五)与 11-02(周一):不同月 → 两根月线。
-        assert!(state.apply_daily_bar(day_bar(2026, 10, 30, 100.)));
-        assert!(state.apply_daily_bar(day_bar(2026, 11, 2, 101.)));
-        assert_eq!(state.bars().len(), 2);
-        assert_eq!(
-            scale::ny_date(state.bars()[0].time_ms).to_string(),
-            "2026-10-01"
-        );
-        assert_eq!(
-            scale::ny_date(state.bars()[1].time_ms).to_string(),
-            "2026-11-01"
-        );
+        // 迟到成交(第一根的桶)→ 丢弃。
+        assert!(!state.apply_trade(base + 10_000, 999., 10));
+        assert_eq!(state.bars()[1].low, 99.);
     }
 }

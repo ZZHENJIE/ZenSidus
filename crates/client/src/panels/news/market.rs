@@ -1,60 +1,25 @@
-//! Market news panel: the market-wide news feed. History comes from one RPC
-//! page (the push channel only carries new articles); from then on the
-//! server's news broadcast inserts live articles as they arrive, merged into
-//! the RPC rows by id — the push lives in the data layer's [`NewsPump`].
+//! Market news panel: the market-wide news feed, **push-only** — the panel
+//! subscribes the server's NEWS channel on attach and every pushed article
+//! is merged into the table by id (the pump lives in the data layer).
+//! 无拉取:表格从订阅时刻起累积,历史页不在客户端拉取。
 
 use gpui_kit::{
     App, Context, Entity, EventEmitter, FocusHandle, IntoElement, ParentElement as _, Render,
-    Styled as _, WeakEntity, Window,
-    base::dock::PanelEvent,
-    component::{button::Button, table::TableState},
-    div,
+    Styled as _, WeakEntity, Window, base::dock::PanelEvent, component::table::TableState, div,
 };
 
 use crate::data::api::NewsItem;
 use crate::data::stream::{NewsConsumer, NewsPump};
-use crate::panels::{Panel, refresh_button};
-use crate::tr;
+use crate::panels::Panel;
 use crate::utils::AppIcon;
-use crate::utils::state::{AppState, ServerStatus};
-use crate::widgets::datatable::{self, Loadable as _, MarketNewsDelegate};
+use crate::utils::state::AppState;
+use crate::widgets::datatable::{self, MarketNewsDelegate};
 
 pub struct MarketNewsPanel {
     focus_handle: FocusHandle,
     table: Entity<TableState<MarketNewsDelegate>>,
     /// The market-wide news push, merged into the table live.
     news: NewsPump,
-}
-
-impl MarketNewsPanel {
-    /// Load one page of recent market news and merge it into the table.
-    /// `load_rows` is deliberately not used here: it replaces rows
-    /// wholesale, which would drop articles that arrived on the push
-    /// channel while the request was in flight — the merge keeps them, with
-    /// the same generation guard against superseded responses.
-    fn backfill(table: WeakEntity<TableState<MarketNewsDelegate>>, cx: &mut App) {
-        crate::data::DataRequest::new(table, tr!("app.market_news.failed")).run(
-            cx,
-            |state, cx| {
-                let delegate = state.delegate_mut();
-                *delegate.loading_mut() = true;
-                *delegate.fetch_generation_mut() += 1;
-                cx.notify();
-                Some(*delegate.fetch_generation_mut())
-            },
-            |state, generation| *state.delegate_mut().fetch_generation_mut() == generation,
-            |server| async move { crate::data::api::news::market(&server, 50).await },
-            |state, _cx, _generation, articles| {
-                let delegate = state.delegate_mut();
-                *delegate.loading_mut() = false;
-                delegate.merge_articles(articles);
-            },
-            // 失败不清行:推送已到的文章保留。
-            |state, _cx, _generation, _err| {
-                *state.delegate_mut().loading_mut() = false;
-            },
-        );
-    }
 }
 
 impl NewsConsumer for MarketNewsPanel {
@@ -69,19 +34,6 @@ impl NewsConsumer for MarketNewsPanel {
                 cx.notify();
             }
         });
-    }
-
-    fn on_news_status(
-        &mut self,
-        status: &ServerStatus,
-        newly_attached: bool,
-        cx: &mut Context<Self>,
-    ) {
-        // First attach after a fresh connect: the startup backfill was
-        // skipped silently while offline, so pull the recent page now.
-        if newly_attached && matches!(status, ServerStatus::Connected) {
-            Self::backfill(self.table.downgrade(), cx);
-        }
     }
 }
 
@@ -107,9 +59,8 @@ impl Panel for MarketNewsPanel {
         this
     }
 
-    fn refresh(entity: WeakEntity<Self::DataEntity>, cx: &mut App) {
-        Self::backfill(entity, cx)
-    }
+    /// 纯推送,无拉取(refresh 是 Panel trait 的必填钩子,留空)。
+    fn refresh(_entity: WeakEntity<Self::DataEntity>, _cx: &mut App) {}
 }
 
 impl gpui_kit::base::dock::Panel for MarketNewsPanel {
@@ -140,16 +91,7 @@ impl gpui_kit::component::dock::Panel for MarketNewsPanel {
         Self::default_title()
     }
 
-    /// Title-bar button: pull the latest page over RPC (the push channel
-    /// keeps the table live in between).
-    fn toolbar_buttons(
-        &mut self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<Vec<Button>> {
-        let weak = self.table.downgrade();
-        Some(vec![refresh_button::<Self>("market-news-refresh", weak)])
-    }
+    // 无工具栏:推送即数据源,没有可手动触发的拉取。
 }
 
 impl Render for MarketNewsPanel {
