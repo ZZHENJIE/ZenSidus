@@ -17,8 +17,8 @@ crates/
 里,server 以 git 依赖 `anysdk` 引入(features = ["full"])对接 Alpaca
 (股票/新闻 WS + REST)与 Finviz Elite;搜索/翻译/IPO 由 server 本地实现。
 
-各 crate 详见各自 `README.md`。开发者文档(docsify 站,含"添加面板 / 添加窗口"
-教程)在 [`dev-docs/`](dev-docs/README.md),本地预览:`cd dev-docs && python -m http.server`。
+client 与 server 详见各自 `README.md`;开发约定与实测陷阱收录于项目级
+skill(`.agents/skills/`)。
 
 ## 快速开始
 

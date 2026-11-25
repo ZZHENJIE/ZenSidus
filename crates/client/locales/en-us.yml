@@ -229,6 +229,10 @@ app:
   settings:
     # 通用页
     general: General
+    about: About
+    about_client_version: Client version
+    about_server_version: Server version
+    about_not_connected: Not connected
     language: Language
     theme: Theme
     theme_desc: Adjust the accent and market colors; changes apply instantly.

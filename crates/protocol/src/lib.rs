@@ -117,10 +117,12 @@ pub enum Frame {
         app_version: String,
     },
     /// server 确认(顺带对时,替代旧 timestamp 端点);同时下发本次会话的
-    /// 令牌(每次认证轮换),客户端在内存里持有它用于后续重连。
+    /// 令牌(每次认证轮换),客户端在内存里持有它用于后续重连。`version`
+    /// 是 server 的构建版本(Cargo.toml),客户端设置页展示用。
     Welcome {
         server_time_ms: i64,
         session_token: String,
+        version: String,
     },
     /// server 拒绝认证(动态码无效/过期、会话令牌失效):发完即断开。客户端
     /// 收到后停止重试(认证失败不是瞬态错误),等人工输入新码。
@@ -263,6 +265,7 @@ mod tests {
             Frame::Welcome {
                 server_time_ms: 1_733_000_000_000,
                 session_token: "uuid-token".into(),
+                version: "0.1.4".into(),
             },
             Frame::AuthFail {
                 reason: "invalid auth code".into(),

@@ -26,6 +26,8 @@ pub struct AppState {
     /// The app-wide server connection hub; created once and never replaced.
     pub hub: Entity<Hub>,
     pub tokio_runtime: Option<tokio::runtime::Runtime>,
+    /// 连接到的 server 版本(Welcome 下发;断开即清,About 页展示)。
+    pub server_version: Option<String>,
 }
 
 impl Global for AppState {}
@@ -49,6 +51,7 @@ impl AppState {
             audio_sender: audio::audio_thread(),
             hub: cx.new(|_| Hub::new(runtime_handle)),
             tokio_runtime,
+            server_version: None,
         }
     }
 

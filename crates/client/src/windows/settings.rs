@@ -5,6 +5,7 @@
 
 mod server;
 
+mod about;
 mod general;
 mod logs;
 mod market_screener;
@@ -219,7 +220,8 @@ impl AppWindow for SettingsWindow {
                 .page(self.server_page())
                 .page(self.market_screener_page())
                 .page(self.small_clock_page())
-                .page(self.logs_page()),
+                .page(self.logs_page())
+                .page(self.about_page()),
         )
     }
 }

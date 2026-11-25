@@ -123,6 +123,7 @@ struct Inner {
     news_tx: broadcast::Sender<NewsData>,
     progress_tx: broadcast::Sender<(u32, u64)>,
     status_tx: broadcast::Sender<ServerStatus>,
+    version_tx: broadcast::Sender<String>,
     clock: Arc<ClockEstimate>,
     next_rpc_id: AtomicU32,
 }
@@ -142,6 +143,7 @@ impl ServerClient {
         let (news_tx, _) = broadcast::channel(NEWS_CAPACITY);
         let (progress_tx, _) = broadcast::channel(16);
         let (status_tx, _) = broadcast::channel(STATUS_CAPACITY);
+        let (version_tx, _) = broadcast::channel(4);
 
         let inner = Arc::new(Inner {
             commands,
@@ -149,6 +151,7 @@ impl ServerClient {
             news_tx,
             progress_tx,
             status_tx,
+            version_tx,
             clock: Arc::new(ClockEstimate::default()),
             next_rpc_id: AtomicU32::new(1),
         });
@@ -205,6 +208,11 @@ impl ServerClient {
     /// bars RPC 的翻页进度 `(rpc_id, 累计条数)`。
     pub fn progress(&self) -> broadcast::Receiver<(u32, u64)> {
         self.inner.progress_tx.subscribe()
+    }
+
+    /// server 版本(Welcome 下发,每次连接收到一帧;设置页展示用)。
+    pub fn version_updates(&self) -> broadcast::Receiver<String> {
+        self.inner.version_tx.subscribe()
     }
 
     pub fn status(&self) -> broadcast::Receiver<ServerStatus> {
@@ -379,12 +387,15 @@ async fn run_session(
                     if let Some(Frame::Welcome {
                         server_time_ms,
                         session_token: fresh,
+                        version,
                     }) = frames
                         .into_iter()
                         .find(|f| matches!(f, Frame::Welcome { .. }))
                     {
                         // 轮换:服务端每次认证都下发新令牌,旧的立即作废。
                         *session_token = Some(fresh);
+                        // server 版本随 Welcome 下发(设置页 About 展示)。
+                        let _ = inner.version_tx.send(version);
                         break server_time_ms;
                     }
                 }

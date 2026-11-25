@@ -1,10 +1,9 @@
 //! Finviz screener exports (token lives server-side; the client sends the
 //! parameter set only).
 //!
-//! The export is still the upstream's raw shape (`headers` + string rows);
-//! the client parses its numeric cells (see `data::format`). This moves to
-//! the server once `ScreenerExport` becomes strongly typed
-//! (Refactoring.md §3.4).
+//! The export arrives **typed** (`Cell { text, value }` — the server parses
+//! each cell, keeping the upstream text verbatim for display and exposing
+//! the numeric value for sorting/filtering).
 
 use anysdk::finviz_sdk::screener::Parameter;
 

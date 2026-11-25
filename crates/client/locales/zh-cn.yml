@@ -229,6 +229,10 @@ app:
   settings:
     # 通用页
     general: 通用
+    about: 关于
+    about_client_version: 客户端版本
+    about_server_version: 服务器版本
+    about_not_connected: 未连接
     language: 语言
     theme: 主题
     theme_desc: 调整品牌主色与行情涨跌配色,修改即时生效。

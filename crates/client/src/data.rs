@@ -3,7 +3,7 @@
 //! ([`stream`]) — lives here, plus the shared display formatters
 //! ([`format`]).
 //!
-//! Rules (see `crates/client/Refactoring.md` §3.1):
+//! Rules (project conventions, mirrored in the zensidus-client skill):
 //! - panels and UI components never touch `protocol::`, `ServerClient` or
 //!   `AppState::hub` directly; they go through this layer's typed API;
 //! - this layer holds no UI types (no panel/delegate state); the one

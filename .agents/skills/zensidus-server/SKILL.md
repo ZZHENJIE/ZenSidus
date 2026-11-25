@@ -23,7 +23,7 @@ crates/server/src/
 │                 # 客户端;server 只做数据分发,无行情计算)/ spawn(上游泵:
 │                 # anysdk 消息 → mapping → fan_out;上游命令走 mpsc)
 ├── session.rs    # 每连接一个 task:Hello 验凭据(TOTP ±1 窗口,或会话令牌;
-│                 # 不符回 AuthFail 后断开)→ Welcome 对时+轮换下发令牌 →
+│                 # 不符回 AuthFail 后断开)→ Welcome 对时+轮换下发令牌+版本 →
 │                 # 心跳(客户端 10s Ping,60s 无帧判死)→ Subscribe/Unsubscribe
 │                 # → RPC 帧转 rpc::handle;单客户端失败不影响其他会话
 ├── hub.rs        # SubscriptionHub:per-client 意愿(符号键大写归一,symbol+Channels)
@@ -49,7 +49,8 @@ crates/server/src/
 帧格式 `[u32 LE 长度][postcard 编码的 Frame]`,一条 TCP 长连接。会话流程:
 client 首发 `Hello{auth}`——首连 `HelloAuth::Totp`(认证器 6 位码,服务端
 roka_totp ±1 窗口校验),重连 `HelloAuth::Session`(会话令牌,免输码)→
-server 回 `Welcome`(顺带对时 + **轮换下发新会话令牌**,旧令牌即作废)→ 客户端
+server 回 `Welcome`(顺带对时 + **轮换下发新会话令牌**,旧令牌即作废,并下发
+server 构建版本供客户端 About 页展示)→ 客户端
 10s `Ping`/server `Pong`;订阅 `Subscribe`/`Unsubscribe`(symbol 名字符串,
 server 侧 intern);推送 `Quote`/`Trade`/`Bar`/`News`;RPC 请求-响应按 id
 路由,`bars` 拉取过程发 `RestProgress` 进度帧。

@@ -168,6 +168,7 @@ impl Hub {
                 self.set_status(ServerStatus::Connecting, cx);
                 self.watch_status(cx);
                 self.watch_staleness(cx);
+                self.watch_version(cx);
             }
             Err(err) => self.fail(err, cx),
         }
@@ -250,11 +251,28 @@ impl Hub {
                             );
                             hub.set_status(ServerStatus::Failed(short.to_string()), cx);
                             hub.teardown();
+                            cx.global_mut::<super::AppState>().server_version = None;
                         });
                         break;
                     }
                     Ok(WireStatus::Disconnected) | Err(_) => break,
                 }
+            }
+        }));
+    }
+
+    /// server 版本(Welcome 随认证下发):收到即写入 AppState(About 页
+    /// 展示)。
+    fn watch_version(&mut self, cx: &mut Context<Self>) {
+        let Some(server) = self.server.as_ref() else {
+            return;
+        };
+        let mut rx = server.version_updates();
+        self.watchers.push(cx.spawn(async move |this, cx| {
+            while let Ok(version) = rx.recv().await {
+                let _ = this.update(cx, |_, cx| {
+                    cx.global_mut::<super::AppState>().server_version = Some(version.clone());
+                });
             }
         }));
     }
@@ -342,6 +360,7 @@ impl Hub {
     pub fn disconnect(&mut self, cx: &mut Context<Self>) {
         let live = self.server.is_some();
         self.teardown();
+        cx.global_mut::<super::AppState>().server_version = None;
         if live && self.status != ServerStatus::Disconnected {
             self.set_status(ServerStatus::Disconnected, cx);
         }

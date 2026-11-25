@@ -2,10 +2,8 @@
 //! money/percent cells and local-time stamps. Pure functions — no GPUI
 //! types, no I/O — so they stay unit-testable and reusable outside panels.
 //!
-//! The money/percent trio (`millions`/`dollars`/`signed_pct`) parses the
-//! Screener export's raw strings on the client today; it moves to the
-//! server once `ScreenerExport` becomes strongly typed
-//! (Refactoring.md §3.4) and is deleted here.
+//! `millions`/`dollars`/`signed_pct` format the earnings calendar's typed
+//! money/percent cells (`Option<f64>`, parsed server-side).
 
 use chrono::TimeZone;
 

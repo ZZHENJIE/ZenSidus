@@ -32,7 +32,7 @@ crates/client/src/
 │                        # screener/snapshot/text),一个查询 = 一个 pub fn,
 │                        # 只发请求+解包响应变体;DTO 全部在此重导出(调用方
 │                        # 不 import protocol)
-├── data/stream.rs       # 订阅封装:Wish(统一意愿:symbols/trades/quotes/bars
+├── data/stream.rs       # 订阅封装:Wish(统一意愿:symbols/trades/quotes
 │                        # + 规则字段)→ hub SymbolWish + 过滤 StreamSpec 派生;
 │                        # StreamHandle<T>(一个消费者一个句柄:hub 状态观察、
 │                        # 泵启停、退订、on_release 守卫全封装)+ StreamConsumer
@@ -62,7 +62,8 @@ crates/client/src/
 ├── widgets/kline.rs     # K 线图组件(纯自定义;chart 面板 + 筛选器 Chart 视图
 │                        # 共用;**全项目唯一自绘 Element**——其余 UI 一律 GPUI
 │                        # Kit 组件组合,不得新增自绘):state(KlineState 实体:
-│                        # bars/viewport/分钟桶聚合/日线聚合(周/月))、
+│                        # bars/viewport + apply_trade 实时蜡烛构建(桶收盘
+│                        # 倒计时边界也在 state))、
 │                        # element(自定义 Element 三阶段绘制+指针交互;
 │                        # wheel_zoom 开关、with_id 多实例)、
 │                        # scale(纯几何/刻度/美东标签,单测)、card(KlineCard:
@@ -120,7 +121,9 @@ crates/client/src/
 ├── windows/dock_window.rs # DockWindow trait:dock 创建/恢复/LayoutChanged 即时落盘
 ├── windows/main.rs      # 主窗口本体 + main/status_bar.rs(左:最新消息+历史 Popover;右:「服务器」label+连接色点,点击弹连接 Popover)
 │                        # + main/close_event.rs(X → 退出对话框:取消 / 不保存 / 保存)
-├── windows/settings.rs  # 设置窗口(text_setting 助手)+ settings/ 五页
+├── windows/settings.rs  # 设置窗口(text_setting 助手)+ settings/ 六页
+│                        # (general/server/market_screener/small_clock/logs/
+│                        # about——about 显示客户端与服务器的构建版本)
 │                        # general/server/market_screener/small_clock/logs
 ├── windows/custom.rs    # 自定义 dock 窗口(多开,center-only)
 ├── windows/small_clock.rs # 小时钟(单例,PopUp;网络时间走 AppState 的 tokio runtime)
@@ -422,14 +425,18 @@ overlay 插件;**裸视图根会在点击时 `expect(ROOT_MISSING)` 直接杀死
   旧 AlpacaHub 直连 Alpaca WS;面板侧经 `data/stream.rs` 的 `StreamHandle`
   消费,不直接碰 hub——守门规则):
   - 应用级唯一 server 连接(ServerClient,utils/server.rs);`set_symbols(EntityId,
-    SymbolWish)` 按订阅者记录意愿(symbols + trades/quotes/bars 三档),**只把并集的增减
-    发给 server**(trades 意愿 → TRADES|DAILY,quotes 意愿 → QUOTES,bars 意愿 →
-    BARS=分钟/更新 bar;筛选器图表视图在分钟周期时置 bars)——两个面板
+    SymbolWish)` 按订阅者记录意愿(symbols + trades/quotes 两档),**只把并集的增减
+    发给 server**(trades 意愿 → TRADES|DAILY,quotes 意愿 → QUOTES)——两个面板
     同看 NVDA 只订一次。server 侧 fan_out 按订阅符号纯路由(见
     zensidus-server 技能),客户端过滤级联(stream_dispatch)保留作双保险
   - **订阅重放在 hub**:ServerClient 自己自动重连(指数退避)但不保存订阅意愿,
     hub 监听其 `status()` 广播,每次 `Connected`(首连与重连)重发两个并集;
     `Failed(reason)`(动态码被拒 AuthFail 等永久错误)→ Failed + teardown
+  - **server 版本**(About 页):Welcome 帧随认证下发 `version`,actor 经
+    `version_tx` 广播,hub 的 `watch_version` 写入 `AppState.server_version`;
+    断开/认证失败即清空(显示"未连接")
+  - 新闻通道独立于 SymbolWish:市场新闻面板 attach 时发
+    `Subscribe{symbols:[], NEWS}`(NewsPump 封装),server 按订阅路由 News
   - 分发不经 hub:消费面板各自经 `StreamHandle` 的过滤泵拿批量
     `StockMessage`(已是 anysdk 形状,由 ServerClient 从协议帧映射),
     实现自己的 `apply_batch`;RPC 走 `data::api` 查询

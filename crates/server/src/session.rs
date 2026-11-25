@@ -150,6 +150,7 @@ fn handle_frame(
             let _ = tx.try_send(Frame::Welcome {
                 server_time_ms: chrono::Utc::now().timestamp_millis(),
                 session_token,
+                version: env!("CARGO_PKG_VERSION").to_string(),
             });
             FrameOutcome::Authenticated
         }
@@ -353,6 +354,7 @@ mod tests {
                 Frame::Welcome {
                     session_token,
                     server_time_ms,
+                    ..
                 } if server_time_ms > 0 => Some(session_token),
                 _ => None,
             })
